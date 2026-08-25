@@ -30,7 +30,7 @@ pnpm e2e
 pnpm --filter @aurax/desktop dev
 ```
 
-开发时「连接」里的 AuraClaw URL **留空**，Vite 会把 `/v1` 代理到本地 Ingress `http://127.0.0.1:8080`（`/v1/streams/*` 去 Streaming Gateway，其余去 Task API）。不要直连 `:8000`，否则任务能通、SSE 会 404。打包后的桌面壳默认连 `http://127.0.0.1:8080`。需要桌面壳时先安装 Rust，再：
+开发时「连接」里的 AuraClaw URL **留空**，Vite 会把 `/v1` 代理到本机 Ingress `http://127.0.0.1:8080`（`/v1/streams/*` 去 Streaming Gateway，其余去 Task API）。不要直连 `:8000`，否则任务能通、SSE 会 404。其他主机上的 AuraX 在「连接」填 `http://<跑 AuraClaw 的机器>:8080`。打包后的桌面壳默认连 `http://127.0.0.1:8080`。需要桌面壳时先安装 Rust，再：
 
 ```bash
 pnpm --filter @aurax/desktop tauri:dev

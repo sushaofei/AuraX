@@ -7,7 +7,7 @@ export default defineConfig({
   server: {
     port: 1420,
     strictPort: true,
-    host: "127.0.0.1",
+    host: true, // 局域网可打开 Vite；/v1 仍代理到本机 Ingress 8080
     proxy: {
       "/v1": {
         target: "http://127.0.0.1:8080",
