@@ -9,6 +9,8 @@ https://github.com/sushaofei/AuraX/issues/1
 pnpm install
 pnpm --filter @aurax/claw-sdk test
 pnpm --filter @aurax/desktop typecheck
+pnpm lint
+pnpm --filter @aurax/desktop e2e
 pnpm --filter @aurax/desktop dev
 ```
 

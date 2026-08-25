@@ -58,15 +58,11 @@ export function ChatView({
     refetchInterval: 2000,
   });
 
-  useEffect(() => {
-    const contents = new Set(
-      (transcript.data?.messages ?? [])
-        .filter((message) => message.role === "user")
-        .map((message) => message.content),
-    );
-    setOptimistic((prev) => prev.filter((text) => !contents.has(text)));
-  }, [transcript.data?.messages]);
-
+  const messages: TranscriptMessage[] = transcript.data?.messages ?? [];
+  const confirmedUser = new Set(
+    messages.filter((message) => message.role === "user").map((message) => message.content),
+  );
+  const pendingOptimistic = optimistic.filter((text) => !confirmedUser.has(text));
   const runStatus = task.data?.run_status;
   const sessionStatus = task.data?.status;
   const streamIdle =
@@ -192,9 +188,8 @@ export function ChatView({
     onSuccess: () => queryClient.invalidateQueries(),
   });
 
-  const messages: TranscriptMessage[] = transcript.data?.messages ?? [];
-  const closed = task.data?.status === "closed";
   const waiting = task.data?.status === "waiting_for_human";
+  const closed = task.data?.status === "closed";
   const canResume = Boolean(task.data && RESUMABLE.has(task.data.status) && !waiting);
   const missing = isNotFound(task.error);
 
@@ -261,7 +256,7 @@ export function ChatView({
             )}
           </div>
         ))}
-        {optimistic.map((text, index) => (
+        {pendingOptimistic.map((text, index) => (
           <div key={`optimistic-${index}`} className="bubble user pending">
             {text}
           </div>

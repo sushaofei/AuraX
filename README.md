@@ -23,8 +23,10 @@ AuraX 是 AuraClaw 的 **macOS 工作台**：发命令、查投影、订 SSE、�
 
 ```bash
 pnpm install
-pnpm --filter @aurax/claw-sdk test
-pnpm --filter @aurax/desktop typecheck
+pnpm typecheck
+pnpm lint
+pnpm test
+pnpm e2e
 pnpm --filter @aurax/desktop dev
 ```
 
@@ -42,3 +44,5 @@ packages/claw-sdk     AuraClaw HTTP/SSE 客户端（无 React / Tauri）
 ```
 
 UI 不直接 `fetch`。所有请求经 `@aurax/claw-sdk`，由 SDK 注入开发身份头与幂等键。
+
+macOS 打包先用 ad-hoc 签名，真实 Developer ID / 公证见 `docs/macos-signing.md`。阶段门禁见 `docs/开发阶段校验清单.md`。
