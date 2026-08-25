@@ -1,13 +1,17 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  createMcpServer,
   inferMcpNetworkMode,
   listMcpServers,
   listMcpTools,
+  MCP_PROTOCOL_REVISION_DEFAULT,
+  MCP_PROTOCOL_REVISION_OPTIONS,
   mcpLifecycle,
+  saveMcpServer,
   type ClawClient,
   type McpAuthStrategy,
   type McpLifecycleAction,
+  type McpProtocolRevision,
+  type McpServerConfigInput,
   type McpServerRecord,
 } from "@aurax/claw-sdk";
 import { useState } from "react";
@@ -27,25 +31,102 @@ const MCP_AUTH_LABEL: Record<McpAuthStrategy, string> = {
   none: "无远端认证（仅 loopback / private）",
 };
 
+type McpFormState = {
+  server_id: string;
+  title: string;
+  endpoint: string;
+  protocol_revision: McpProtocolRevision;
+  auth_strategy: McpAuthStrategy;
+  credential_ref: string;
+  allowed_tool_prefixes: string;
+};
+
+const EMPTY_MCP_FORM: McpFormState = {
+  server_id: "",
+  title: "",
+  endpoint: "",
+  protocol_revision: MCP_PROTOCOL_REVISION_DEFAULT,
+  auth_strategy: "workload_trusted_context",
+  credential_ref: "",
+  allowed_tool_prefixes: "",
+};
+
+function isMcpAuthStrategy(value: string | undefined): value is McpAuthStrategy {
+  return value === "workload_trusted_context" || value === "oauth_client_credentials" || value === "none";
+}
+
+function isMcpProtocolRevision(value: string | undefined): value is McpProtocolRevision {
+  return MCP_PROTOCOL_REVISION_OPTIONS.some((option) => option.value === value);
+}
+
+function formFromServer(server: McpServerRecord): McpFormState {
+  const config = server.latest_config;
+  const authStrategy = isMcpAuthStrategy(config?.auth_strategy)
+    ? config.auth_strategy
+    : "workload_trusted_context";
+  return {
+    server_id: server.server_id,
+    title: config?.title ?? "",
+    endpoint: config?.endpoint ?? "",
+    protocol_revision: isMcpProtocolRevision(config?.protocol_revision)
+      ? config.protocol_revision
+      : MCP_PROTOCOL_REVISION_DEFAULT,
+    auth_strategy: authStrategy,
+    credential_ref: config?.credential_ref ?? "",
+    allowed_tool_prefixes: (config?.allowed_tool_prefixes ?? []).join(", "),
+  };
+}
+
+function buildMcpPayload(form: McpFormState, endpoint: string): McpServerConfigInput {
+  const allowedToolPrefixes = form.allowed_tool_prefixes
+    .split(",")
+    .map((part) => part.trim())
+    .filter(Boolean);
+  if (form.auth_strategy === "none") {
+    return {
+      server_id: form.server_id.trim(),
+      title: form.title.trim(),
+      endpoint,
+      protocol_revision: form.protocol_revision,
+      network_mode: inferMcpNetworkMode(endpoint),
+      auth_strategy: "none",
+      allowed_tool_prefixes: allowedToolPrefixes,
+    };
+  }
+  return {
+    server_id: form.server_id.trim(),
+    title: form.title.trim(),
+    endpoint,
+    protocol_revision: form.protocol_revision,
+    network_mode: inferMcpNetworkMode(endpoint),
+    auth_strategy: "workload_trusted_context",
+    credential_ref: form.credential_ref.trim(),
+    allowed_tool_prefixes: allowedToolPrefixes,
+  };
+}
+
 export function McpView({ client }: { client: ClawClient }) {
   const queryClient = useQueryClient();
   const servers = useQuery({
     queryKey: ["mcp", client.baseUrl],
     queryFn: async () => (await listMcpServers(client)).body.servers,
   });
-  const [form, setForm] = useState({
-    server_id: "",
-    title: "",
-    endpoint: "",
-    auth_strategy: "workload_trusted_context" as McpAuthStrategy,
-    credential_ref: "",
-    allowed_tool_prefixes: "",
-  });
+  const [form, setForm] = useState<McpFormState>(EMPTY_MCP_FORM);
   const endpoint = form.endpoint.trim();
+  const serverId = form.server_id.trim();
+  const existingServer =
+    serverId.length > 0
+      ? (servers.data ?? []).find((server) => server.server_id === serverId)
+      : undefined;
+  const willUpdate =
+    existingServer != null && existingServer.desired_state !== "retired";
   const networkMode = endpoint ? inferMcpNetworkMode(endpoint) : null;
+  const protocolHint =
+    MCP_PROTOCOL_REVISION_OPTIONS.find((option) => option.value === form.protocol_revision)
+      ?.hint ?? "";
   const nonePublicConflict =
     form.auth_strategy === "none" && networkMode === "public";
-  const create = useMutation({
+  const save = useMutation({
     mutationFn: async () => {
       if (form.auth_strategy === "workload_trusted_context" && !form.credential_ref.trim()) {
         throw new Error("workload_trusted_context 必须填写 credential_ref，不要贴明文 Secret");
@@ -53,30 +134,10 @@ export function McpView({ client }: { client: ClawClient }) {
       if (nonePublicConflict) {
         throw new Error("auth_strategy none 不能用于 public endpoint，请改用 loopback 地址");
       }
-      const allowedToolPrefixes = form.allowed_tool_prefixes
-        .split(",")
-        .map((part) => part.trim())
-        .filter(Boolean);
-      const payload =
-        form.auth_strategy === "none"
-          ? {
-              server_id: form.server_id.trim(),
-              title: form.title.trim(),
-              endpoint,
-              network_mode: inferMcpNetworkMode(endpoint),
-              auth_strategy: "none" as const,
-              allowed_tool_prefixes: allowedToolPrefixes,
-            }
-          : {
-              server_id: form.server_id.trim(),
-              title: form.title.trim(),
-              endpoint,
-              network_mode: inferMcpNetworkMode(endpoint),
-              auth_strategy: "workload_trusted_context" as const,
-              credential_ref: form.credential_ref.trim(),
-              allowed_tool_prefixes: allowedToolPrefixes,
-            };
-      await createMcpServer(client, payload);
+      if (!serverId) {
+        throw new Error("server_id 不能为空");
+      }
+      await saveMcpServer(client, buildMcpPayload(form, endpoint), existingServer);
     },
     onSettled: () => {
       void queryClient.invalidateQueries({ queryKey: ["mcp"] });
@@ -131,6 +192,26 @@ export function McpView({ client }: { client: ClawClient }) {
           </p>
         ) : null}
         <label className="stack" style={{ gap: 6 }}>
+          <span style={{ fontSize: 13, fontWeight: 600 }}>MCP Protocol Version</span>
+          <select
+            aria-label="MCP Protocol Version"
+            value={form.protocol_revision}
+            onChange={(event) =>
+              setForm({
+                ...form,
+                protocol_revision: event.target.value as McpProtocolRevision,
+              })
+            }
+          >
+            {MCP_PROTOCOL_REVISION_OPTIONS.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        {protocolHint ? <p className="mono">{protocolHint}</p> : null}
+        <label className="stack" style={{ gap: 6 }}>
           <span style={{ fontSize: 13, fontWeight: 600 }}>认证方式</span>
           <select
             aria-label="认证方式"
@@ -168,15 +249,21 @@ export function McpView({ client }: { client: ClawClient }) {
           value={form.allowed_tool_prefixes}
           onChange={(event) => setForm({ ...form, allowed_tool_prefixes: event.target.value })}
         />
+        {willUpdate ? (
+          <p className="mono">
+            检测到 {serverId} 已登记（rev {existingServer?.latest_revision}），提交将写入 rev{" "}
+            {(existingServer?.latest_revision ?? 0) + 1}，不会新建 server_id。
+          </p>
+        ) : null}
         <button
           className="btn"
           type="button"
           disabled={nonePublicConflict}
-          onClick={() => create.mutate()}
+          onClick={() => save.mutate()}
         >
-          登记
+          {willUpdate ? "更新配置" : "登记"}
         </button>
-        {create.error ? <p className="error">{errorText(create.error)}</p> : null}
+        {save.error ? <p className="error">{errorText(save.error)}</p> : null}
       </div>
       <div className="list" style={{ marginTop: 16 }}>
         {servers.error ? <p className="error">{errorText(servers.error)}</p> : null}
@@ -193,6 +280,9 @@ export function McpView({ client }: { client: ClawClient }) {
             <p className="mono">
               {server.server_id} · observed {server.runtime?.observed_state ?? "—"} · rev{" "}
               {server.latest_revision}
+              {server.latest_config?.protocol_revision
+                ? ` · ${server.latest_config.protocol_revision}`
+                : ""}
               {server.latest_config?.auth_strategy
                 ? ` · ${server.latest_config.auth_strategy}`
                 : ""}
@@ -221,6 +311,7 @@ export function McpView({ client }: { client: ClawClient }) {
                   : null
               }
               onAction={(action) => act.mutate({ server, action })}
+              onEdit={() => setForm(formFromServer(server))}
             />
             {server.desired_state === "retired" ? (
               <p className="mono">已退役。用同一 server_id 再点登记即可恢复。</p>
@@ -241,6 +332,7 @@ function McpServerActions({
   pendingAction,
   lastAction,
   onAction,
+  onEdit,
 }: {
   client: ClawClient;
   server: McpServerRecord;
@@ -248,6 +340,7 @@ function McpServerActions({
   pendingAction: McpLifecycleAction | null;
   lastAction: McpLifecycleAction | null;
   onAction: (action: McpLifecycleAction) => void;
+  onEdit: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const tools = useQuery({
@@ -269,6 +362,14 @@ function McpServerActions({
             {pendingAction === action ? "…" : MCP_ACTION_LABEL[action]}
           </button>
         ))}
+        <button
+          className="btn ghost"
+          type="button"
+          disabled={server.desired_state === "retired"}
+          onClick={onEdit}
+        >
+          填入表单
+        </button>
         <button
           className="btn ghost"
           type="button"

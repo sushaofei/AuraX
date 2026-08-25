@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { ClawApiError } from "./errors.js";
 import { ClawClient } from "./client.js";
-import { createMcpServer, inferMcpNetworkMode, listMcpTools, mcpLifecycle } from "./mcp.js";
+import { createMcpServer, inferMcpNetworkMode, listMcpTools, mcpLifecycle, saveMcpServer, updateMcpServer } from "./mcp.js";
 
 function jsonResponse(body: unknown, status = 202): Response {
   return new Response(JSON.stringify(body), {
@@ -82,6 +82,30 @@ describe("createMcpServer", () => {
     expect(payload.credential_ref).toBeUndefined();
   });
 
+  it("sends an explicit protocol_revision", async () => {
+    let body: string | null = null;
+    const client = new ClawClient({
+      baseUrl: "http://claw.example",
+      fetch: (async (_input, init) => {
+        body = typeof init?.body === "string" ? init.body : null;
+        return jsonResponse({
+          server_id: "chaintower_mcp",
+          desired_state: "disabled",
+          latest_revision: 1,
+        });
+      }) as typeof fetch,
+    });
+    await createMcpServer(client, {
+      server_id: "chaintower_mcp",
+      title: "ChainTower MCP",
+      endpoint: "http://127.0.0.1:48088/rpc-api/agent-runtime/mcp",
+      protocol_revision: "2025-06-18",
+      auth_strategy: "none",
+      allowed_tool_prefixes: ["price_insight."],
+    });
+    expect(JSON.parse(body ?? "{}").protocol_revision).toBe("2025-06-18");
+  });
+
   it("keeps an explicit network_mode", async () => {
     let body: string | null = null;
     const client = new ClawClient({
@@ -99,6 +123,146 @@ describe("createMcpServer", () => {
       credential_ref: "vault/github#token",
     });
     expect(JSON.parse(body ?? "{}").network_mode).toBe("public");
+  });
+});
+
+describe("updateMcpServer", () => {
+  it("sends PUT with the current revision", async () => {
+    let method: string | undefined;
+    let url: string | undefined;
+    let body: string | null = null;
+    let expectedRevision: string | null = null;
+    const client = new ClawClient({
+      baseUrl: "http://claw.example",
+      fetch: (async (input, init) => {
+        method = init?.method;
+        url = String(input);
+        body = typeof init?.body === "string" ? init.body : null;
+        const headers = init?.headers;
+        expectedRevision =
+          headers instanceof Headers
+            ? headers.get("X-Expected-Revision")
+            : ((headers as Record<string, string> | undefined)?.["X-Expected-Revision"] ??
+              null);
+        return jsonResponse({
+          server_id: "chaintower_mcp",
+          desired_state: "disabled",
+          latest_revision: 2,
+        });
+      }) as typeof fetch,
+    });
+    await updateMcpServer(
+      client,
+      "chaintower_mcp",
+      {
+        title: "ChainTower MCP",
+        endpoint: "http://127.0.0.1:48088/rpc-api/agent-runtime/mcp",
+        protocol_revision: "2025-06-18",
+        auth_strategy: "none",
+        allowed_tool_prefixes: ["price_insight."],
+      },
+      1,
+    );
+    expect(method).toBe("PUT");
+    expect(url).toBe("http://claw.example/v1/admin/mcp-servers/chaintower_mcp");
+    expect(expectedRevision).toBe("1");
+    expect(JSON.parse(body ?? "{}")).toMatchObject({
+      protocol_revision: "2025-06-18",
+      auth_strategy: "none",
+    });
+    expect(JSON.parse(body ?? "{}").server_id).toBeUndefined();
+  });
+});
+
+describe("saveMcpServer", () => {
+  it("updates an existing server instead of posting again", async () => {
+    let method: string | undefined;
+    const client = new ClawClient({
+      baseUrl: "http://claw.example",
+      fetch: (async (_input, init) => {
+        method = init?.method;
+        return jsonResponse({
+          server_id: "chaintower_mcp",
+          desired_state: "disabled",
+          latest_revision: 2,
+        });
+      }) as typeof fetch,
+    });
+    await saveMcpServer(
+      client,
+      {
+        server_id: "chaintower_mcp",
+        title: "ChainTower MCP",
+        endpoint: "http://127.0.0.1:48088/rpc-api/agent-runtime/mcp",
+        protocol_revision: "2025-06-18",
+        auth_strategy: "none",
+        allowed_tool_prefixes: ["price_insight."],
+      },
+      {
+        server_id: "chaintower_mcp",
+        desired_state: "disabled",
+        latest_revision: 1,
+      },
+    );
+    expect(method).toBe("PUT");
+  });
+
+  it("creates when the server_id is new", async () => {
+    let method: string | undefined;
+    const client = new ClawClient({
+      baseUrl: "http://claw.example",
+      fetch: (async (_input, init) => {
+        method = init?.method;
+        return jsonResponse({
+          server_id: "new-mcp",
+          desired_state: "disabled",
+          latest_revision: 1,
+        });
+      }) as typeof fetch,
+    });
+    await saveMcpServer(
+      client,
+      {
+        server_id: "new-mcp",
+        title: "New MCP",
+        endpoint: "http://127.0.0.1:8020/mcp",
+        auth_strategy: "none",
+        allowed_tool_prefixes: ["demo."],
+      },
+      undefined,
+    );
+    expect(method).toBe("POST");
+  });
+
+  it("creates when the existing server is retired", async () => {
+    let method: string | undefined;
+    const client = new ClawClient({
+      baseUrl: "http://claw.example",
+      fetch: (async (_input, init) => {
+        method = init?.method;
+        return jsonResponse({
+          server_id: "old-mcp",
+          desired_state: "disabled",
+          latest_revision: 3,
+        });
+      }) as typeof fetch,
+    });
+    await saveMcpServer(
+      client,
+      {
+        server_id: "old-mcp",
+        title: "Old MCP",
+        endpoint: "http://127.0.0.1:8020/mcp",
+        auth_strategy: "none",
+        allowed_tool_prefixes: ["demo."],
+      },
+      {
+        server_id: "old-mcp",
+        desired_state: "retired",
+        latest_revision: 2,
+      },
+    );
+    expect(method).toBe("POST");
   });
 });
 

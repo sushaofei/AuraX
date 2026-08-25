@@ -26,16 +26,44 @@ export type McpAuthStrategy =
   | "oauth_client_credentials"
   | "none";
 
+export type McpProtocolRevision = "2026-07-28" | "2025-11-25" | "2025-06-18";
+
+export const MCP_PROTOCOL_REVISION_DEFAULT: McpProtocolRevision = "2026-07-28";
+
+export const MCP_PROTOCOL_REVISION_OPTIONS: ReadonlyArray<{
+  value: McpProtocolRevision;
+  label: string;
+  hint: string;
+}> = [
+  {
+    value: "2026-07-28",
+    label: "2026-07-28（现代，server/discover）",
+    hint: "AuraMCP 等新 Server；对账先发 server/discover。",
+  },
+  {
+    value: "2025-11-25",
+    label: "2025-11-25（legacy initialize）",
+    hint: "仍使用 initialize 握手的 legacy Server。",
+  },
+  {
+    value: "2025-06-18",
+    label: "2025-06-18（Java MCP）",
+    hint: "chaintower Java MCP Server（Spring AI）；不支持 server/discover。",
+  },
+];
+
 export type McpServerConfigInput = {
   server_id: string;
   title: string;
   endpoint: string;
   network_mode?: McpNetworkMode;
-  protocol_revision?: string;
+  protocol_revision?: McpProtocolRevision;
   auth_strategy?: McpAuthStrategy;
   credential_ref?: string | null;
   allowed_tool_prefixes?: string[];
 };
+
+export type McpServerConfigUpdate = Omit<McpServerConfigInput, "server_id">;
 
 const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "::1"]);
 
@@ -49,16 +77,22 @@ export function inferMcpNetworkMode(endpoint: string): Exclude<McpNetworkMode, "
   }
 }
 
+export function buildMcpServerConfigPayload(
+  config: McpServerConfigInput,
+): McpServerConfigInput & { network_mode: McpNetworkMode } {
+  return {
+    ...config,
+    network_mode: config.network_mode ?? inferMcpNetworkMode(config.endpoint),
+  };
+}
+
 export function createMcpServer(
   client: ClawClient,
   config: McpServerConfigInput,
   idempotencyKey = newIdempotencyKey("mcp-create"),
 ) {
   return client.request<McpServerRecord>("POST", "/v1/admin/mcp-servers", {
-    json: {
-      ...config,
-      network_mode: config.network_mode ?? inferMcpNetworkMode(config.endpoint),
-    },
+    json: buildMcpServerConfigPayload(config),
     idempotencyKey,
     expectedRevision: 0,
   });
@@ -67,15 +101,37 @@ export function createMcpServer(
 export function updateMcpServer(
   client: ClawClient,
   serverId: string,
-  config: Record<string, unknown>,
+  config: McpServerConfigUpdate,
   expectedRevision: number,
   idempotencyKey = newIdempotencyKey("mcp-update"),
 ) {
+  const { server_id: _serverId, ...json } = buildMcpServerConfigPayload({
+    server_id: serverId,
+    ...config,
+  });
   return client.request<McpServerRecord>("PUT", `/v1/admin/mcp-servers/${serverId}`, {
-    json: config,
+    json,
     idempotencyKey,
     expectedRevision,
   });
+}
+
+/** Create a new server, or append a revision when server_id already exists. */
+export function saveMcpServer(
+  client: ClawClient,
+  config: McpServerConfigInput,
+  existing: McpServerRecord | null | undefined,
+) {
+  const serverId = config.server_id.trim();
+  if (
+    existing &&
+    existing.server_id === serverId &&
+    existing.desired_state !== "retired"
+  ) {
+    const { server_id: _serverId, ...update } = buildMcpServerConfigPayload(config);
+    return updateMcpServer(client, serverId, update, existing.latest_revision);
+  }
+  return createMcpServer(client, config);
 }
 
 export async function mcpLifecycle(
