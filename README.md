@@ -7,10 +7,10 @@ AuraX 是 AuraClaw 的 **macOS 工作台**：发命令、查投影、订 SSE、�
 ## v1 范围
 
 - 连接设置：只改 AuraClaw base URL。身份写死 `platform` / `local-org` / `local-user`。
-- 实时对话：`POST /v1/tasks`（`source=chat`）→ SSE → transcript / result 回填。
+- 实时对话：`POST /v1/tasks`（`source=chat`）→ SSE → transcript / result 回填；助手回复与 SKILL.md 用 `react-markdown` + `remark-gfm` 渲染。
 - Session 历史：`GET /v1/tasks?kind=chat`，打开即恢复。关窗口 ≠ 取消任务。
 - MCP 管理：登记 / 测试 / 启停 / 对账 / 退役 / 列出 Catalog tools。Secret 只填 `credential_ref`。
-- Skill 管理：只读目录 + 启停。无发布入口。
+- Skill 管理：只读目录 + 启停；对话页勾选「允许使用的 Skill」（租户目录，下一轮 Run 生效）。无发布入口。
 
 ## 明确不做
 

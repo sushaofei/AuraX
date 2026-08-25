@@ -66,3 +66,59 @@ export function openTaskStream(
 ): Promise<ReadableStream<Uint8Array>> {
   return client.stream(`/v1/streams/${sessionId}`, options);
 }
+
+async function wait(ms: number, signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted || ms <= 0) {
+    return;
+  }
+  await new Promise<void>((resolve) => {
+    const timer = setTimeout(resolve, ms);
+    signal?.addEventListener(
+      "abort",
+      () => {
+        clearTimeout(timer);
+        resolve();
+      },
+      { once: true },
+    );
+  });
+}
+
+/** Subscribe to a Session SSE and reconnect with Last-Event-ID until aborted. */
+export async function* followTaskStream(
+  client: ClawClient,
+  sessionId: string,
+  options: { lastEventId?: string; signal?: AbortSignal; retryMs?: number } = {},
+): AsyncGenerator<SseEvent> {
+  let lastId = options.lastEventId;
+  let delay = options.retryMs ?? 500;
+  const maxDelay = 8_000;
+  while (!options.signal?.aborted) {
+    try {
+      const streamOptions: { lastEventId?: string; signal?: AbortSignal } = {};
+      if (lastId) {
+        streamOptions.lastEventId = lastId;
+      }
+      if (options.signal) {
+        streamOptions.signal = options.signal;
+      }
+      const stream = await openTaskStream(client, sessionId, streamOptions);
+      delay = options.retryMs ?? 500;
+      for await (const event of readSse(stream)) {
+        if (event.id) {
+          lastId = event.id;
+        }
+        yield event;
+      }
+    } catch {
+      if (options.signal?.aborted) {
+        return;
+      }
+    }
+    if (options.signal?.aborted) {
+      return;
+    }
+    await wait(delay, options.signal);
+    delay = Math.min(delay * 2, maxDelay);
+  }
+}
