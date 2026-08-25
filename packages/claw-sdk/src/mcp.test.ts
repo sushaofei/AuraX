@@ -1,0 +1,175 @@
+import { describe, expect, it } from "vitest";
+import { ClawApiError } from "./errors.js";
+import { ClawClient } from "./client.js";
+import { createMcpServer, inferMcpNetworkMode, listMcpTools, mcpLifecycle } from "./mcp.js";
+
+function jsonResponse(body: unknown, status = 202): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
+describe("inferMcpNetworkMode", () => {
+  it("uses loopback for Credential Proxy localhost aliases", () => {
+    expect(inferMcpNetworkMode("http://127.0.0.1:8020/mcp")).toBe("loopback");
+    expect(inferMcpNetworkMode("http://localhost:8020/mcp")).toBe("loopback");
+    expect(inferMcpNetworkMode("http://[::1]:8020/mcp")).toBe("loopback");
+    expect(inferMcpNetworkMode("  http://127.0.0.1:8020/mcp  ")).toBe("loopback");
+  });
+
+  it("keeps public for remote HTTPS endpoints", () => {
+    expect(inferMcpNetworkMode("https://mcp.example/mcp")).toBe("public");
+    expect(inferMcpNetworkMode("https://auramcp.internal/mcp")).toBe("public");
+  });
+
+  it("does not treat 0.0.0.0 as loopback", () => {
+    expect(inferMcpNetworkMode("http://0.0.0.0:8020/mcp")).toBe("public");
+  });
+});
+
+describe("createMcpServer", () => {
+  it("sends loopback when the endpoint is local AuraMCP", async () => {
+    let body: string | null = null;
+    const client = new ClawClient({
+      baseUrl: "http://claw.example",
+      fetch: (async (_input, init) => {
+        body = typeof init?.body === "string" ? init.body : null;
+        return jsonResponse({ server_id: "auramcp", desired_state: "disabled", latest_revision: 1 });
+      }) as typeof fetch,
+    });
+    await createMcpServer(client, {
+      server_id: "auramcp",
+      title: "AuraMCP extensions",
+      endpoint: "http://127.0.0.1:8020/mcp",
+      auth_strategy: "workload_trusted_context",
+      credential_ref: "vault/auramcp#workload",
+      allowed_tool_prefixes: ["auramcp."],
+    });
+    expect(JSON.parse(body ?? "{}")).toMatchObject({
+      endpoint: "http://127.0.0.1:8020/mcp",
+      network_mode: "loopback",
+      credential_ref: "vault/auramcp#workload",
+    });
+  });
+
+  it("keeps an explicit network_mode", async () => {
+    let body: string | null = null;
+    const client = new ClawClient({
+      baseUrl: "http://claw.example",
+      fetch: (async (_input, init) => {
+        body = typeof init?.body === "string" ? init.body : null;
+        return jsonResponse({ server_id: "github-mcp", desired_state: "disabled", latest_revision: 1 });
+      }) as typeof fetch,
+    });
+    await createMcpServer(client, {
+      server_id: "github-mcp",
+      title: "GitHub MCP",
+      endpoint: "https://mcp.example/mcp",
+      network_mode: "public",
+      credential_ref: "vault/github#token",
+    });
+    expect(JSON.parse(body ?? "{}").network_mode).toBe("public");
+  });
+});
+
+describe("listMcpTools", () => {
+  it("reads the catalog tools path for a registered server", async () => {
+    let capturedUrl: string | undefined;
+    const client = new ClawClient({
+      baseUrl: "http://claw.example",
+      fetch: (async (input) => {
+        capturedUrl = String(input);
+        return jsonResponse(
+          {
+            server_id: "auramcp",
+            tools: [{ canonical_name: "auramcp.health.ping", title: "ping" }],
+          },
+          200,
+        );
+      }) as typeof fetch,
+    });
+    const response = await listMcpTools(client, "auramcp");
+    expect(capturedUrl).toBe("http://claw.example/v1/admin/mcp-servers/auramcp/tools");
+    expect(response.body.tools[0]?.canonical_name).toBe("auramcp.health.ping");
+  });
+});
+
+describe("mcpLifecycle", () => {
+  it("treats HTTP 202 with status failed as an error", async () => {
+    const client = new ClawClient({
+      baseUrl: "http://claw.example",
+      fetch: (async () =>
+        jsonResponse({
+          operation_id: "op-1",
+          server_id: "auramcp",
+          operation: "test",
+          status: "failed",
+          safe_error_code: "mcp_connection_test_failed",
+        })) as typeof fetch,
+    });
+    await expect(mcpLifecycle(client, "auramcp", "test", 1)).rejects.toMatchObject({
+      name: "ClawApiError",
+      code: "mcp_connection_test_failed",
+      message: "MCP test 失败",
+      status: 202,
+    });
+    await expect(mcpLifecycle(client, "auramcp", "test", 1)).rejects.toBeInstanceOf(ClawApiError);
+  });
+
+  it("includes result.error_type in the failure message", async () => {
+    const client = new ClawClient({
+      baseUrl: "http://claw.example",
+      fetch: (async () =>
+        jsonResponse({
+          operation_id: "op-1",
+          server_id: "auramcp",
+          operation: "test",
+          status: "failed",
+          safe_error_code: "auraclaw_error",
+          result: { error_type: "CredentialAccessError" },
+        })) as typeof fetch,
+    });
+    await expect(mcpLifecycle(client, "auramcp", "test", 1)).rejects.toMatchObject({
+      code: "auraclaw_error",
+      message: "MCP test 失败 (CredentialAccessError)",
+    });
+  });
+
+  it("includes result.error_message in the failure message", async () => {
+    const client = new ClawClient({
+      baseUrl: "http://claw.example",
+      fetch: (async () =>
+        jsonResponse({
+          operation_id: "op-1",
+          server_id: "auramcp",
+          operation: "test",
+          status: "failed",
+          safe_error_code: "auraclaw_error",
+          result: {
+            error_type: "AuraClawError",
+            error_message: "internal contract call failed with HTTP 500",
+          },
+        })) as typeof fetch,
+    });
+    await expect(mcpLifecycle(client, "auramcp", "test", 1)).rejects.toMatchObject({
+      message:
+        "MCP test 失败 (AuraClawError: internal contract call failed with HTTP 500)",
+    });
+  });
+
+  it("returns the operation when status is succeeded", async () => {
+    const client = new ClawClient({
+      baseUrl: "http://claw.example",
+      fetch: (async () =>
+        jsonResponse({
+          operation_id: "op-2",
+          server_id: "auramcp",
+          operation: "test",
+          status: "succeeded",
+        })) as typeof fetch,
+    });
+    const response = await mcpLifecycle(client, "auramcp", "test", 1);
+    expect(response.body.status).toBe("succeeded");
+  });
+});

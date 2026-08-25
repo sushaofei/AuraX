@@ -1,0 +1,33 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "AuraX",
+  "version": "0.1.0",
+  "identifier": "app.aurax.desktop",
+  "build": {
+    "beforeDevCommand": "pnpm --dir .. dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "pnpm --dir .. build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "AuraX",
+        "width": 1280,
+        "height": 820,
+        "minWidth": 960,
+        "minHeight": 640
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/icon.png"
+    ]
+  }
+}
