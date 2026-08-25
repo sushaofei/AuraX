@@ -86,6 +86,8 @@ export type McpServerRecord = {
     title?: string;
     endpoint?: string;
     credential_ref?: string | null;
+    auth_strategy?: string;
+    network_mode?: string;
   };
   runtime?: {
     observed_state?: string;

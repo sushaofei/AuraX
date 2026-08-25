@@ -6,6 +6,7 @@ import {
   listMcpTools,
   mcpLifecycle,
   type ClawClient,
+  type McpAuthStrategy,
   type McpLifecycleAction,
   type McpServerRecord,
 } from "@aurax/claw-sdk";
@@ -20,6 +21,12 @@ const MCP_ACTION_LABEL: Record<McpLifecycleAction, string> = {
   retire: "退役",
 };
 
+const MCP_AUTH_LABEL: Record<McpAuthStrategy, string> = {
+  workload_trusted_context: "Workload 受信上下文（Bearer + credential_ref）",
+  oauth_client_credentials: "OAuth Client Credentials",
+  none: "无远端认证（仅 loopback / private）",
+};
+
 export function McpView({ client }: { client: ClawClient }) {
   const queryClient = useQueryClient();
   const servers = useQuery({
@@ -30,27 +37,46 @@ export function McpView({ client }: { client: ClawClient }) {
     server_id: "",
     title: "",
     endpoint: "",
+    auth_strategy: "workload_trusted_context" as McpAuthStrategy,
     credential_ref: "",
     allowed_tool_prefixes: "",
   });
+  const endpoint = form.endpoint.trim();
+  const networkMode = endpoint ? inferMcpNetworkMode(endpoint) : null;
+  const nonePublicConflict =
+    form.auth_strategy === "none" && networkMode === "public";
   const create = useMutation({
     mutationFn: async () => {
-      if (!form.credential_ref.trim()) {
+      if (form.auth_strategy === "workload_trusted_context" && !form.credential_ref.trim()) {
         throw new Error("workload_trusted_context 必须填写 credential_ref，不要贴明文 Secret");
       }
-      const endpoint = form.endpoint.trim();
-      await createMcpServer(client, {
-        server_id: form.server_id.trim(),
-        title: form.title.trim(),
-        endpoint,
-        network_mode: inferMcpNetworkMode(endpoint),
-        auth_strategy: "workload_trusted_context",
-        credential_ref: form.credential_ref.trim(),
-        allowed_tool_prefixes: form.allowed_tool_prefixes
-          .split(",")
-          .map((part) => part.trim())
-          .filter(Boolean),
-      });
+      if (nonePublicConflict) {
+        throw new Error("auth_strategy none 不能用于 public endpoint，请改用 loopback 地址");
+      }
+      const allowedToolPrefixes = form.allowed_tool_prefixes
+        .split(",")
+        .map((part) => part.trim())
+        .filter(Boolean);
+      const payload =
+        form.auth_strategy === "none"
+          ? {
+              server_id: form.server_id.trim(),
+              title: form.title.trim(),
+              endpoint,
+              network_mode: inferMcpNetworkMode(endpoint),
+              auth_strategy: "none" as const,
+              allowed_tool_prefixes: allowedToolPrefixes,
+            }
+          : {
+              server_id: form.server_id.trim(),
+              title: form.title.trim(),
+              endpoint,
+              network_mode: inferMcpNetworkMode(endpoint),
+              auth_strategy: "workload_trusted_context" as const,
+              credential_ref: form.credential_ref.trim(),
+              allowed_tool_prefixes: allowedToolPrefixes,
+            };
+      await createMcpServer(client, payload);
     },
     onSettled: () => {
       void queryClient.invalidateQueries({ queryKey: ["mcp"] });
@@ -75,8 +101,9 @@ export function McpView({ client }: { client: ClawClient }) {
       <p className="kicker">Hands registry</p>
       <h1>MCP</h1>
       <p className="lede">
-        只登记 AuraClaw 受管 Server。凭证填 credential_ref，不要贴明文 Secret。loopback 相对的是
-        Credential Proxy，不是这台 Mac。
+        只登记 AuraClaw 受管 Server。受管 Server 填 credential_ref，不要贴明文 Secret。本地无认证
+        Server 选「无远端认证」且 endpoint 须为 loopback。loopback 相对的是 Credential Proxy，不是这台
+        Mac。
       </p>
       <div className="card stack">
         <div className="row">
@@ -96,24 +123,57 @@ export function McpView({ client }: { client: ClawClient }) {
           value={form.endpoint}
           onChange={(event) => setForm({ ...form, endpoint: event.target.value })}
         />
-        {form.endpoint.trim() ? (
+        {networkMode ? (
           <p className="mono">
-            {inferMcpNetworkMode(form.endpoint) === "loopback"
+            {networkMode === "loopback"
               ? "将以 loopback 登记（相对 Credential Proxy，不是这台 Mac）"
               : "将以 public 登记（需 HTTPS 公网地址）"}
           </p>
         ) : null}
-        <input
-          placeholder="credential_ref（必填引用，不是明文）"
-          value={form.credential_ref}
-          onChange={(event) => setForm({ ...form, credential_ref: event.target.value })}
-        />
+        <label className="stack" style={{ gap: 6 }}>
+          <span style={{ fontSize: 13, fontWeight: 600 }}>认证方式</span>
+          <select
+            aria-label="认证方式"
+            value={form.auth_strategy}
+            onChange={(event) =>
+              setForm({
+                ...form,
+                auth_strategy: event.target.value as McpAuthStrategy,
+              })
+            }
+          >
+            <option value="workload_trusted_context">
+              {MCP_AUTH_LABEL.workload_trusted_context}
+            </option>
+            <option value="none">{MCP_AUTH_LABEL.none}</option>
+          </select>
+        </label>
+        {form.auth_strategy === "none" ? (
+          <p className="mono">
+            不向远端 MCP 发送 Authorization Bearer。仍经 AuraClaw Policy 与 Credential Proxy Egress。
+          </p>
+        ) : null}
+        {nonePublicConflict ? (
+          <p className="error">无远端认证不能用于 public endpoint，请把地址改成 loopback。</p>
+        ) : null}
+        {form.auth_strategy === "workload_trusted_context" ? (
+          <input
+            placeholder="credential_ref（必填引用，不是明文）"
+            value={form.credential_ref}
+            onChange={(event) => setForm({ ...form, credential_ref: event.target.value })}
+          />
+        ) : null}
         <input
           placeholder="allowed_tool_prefixes，逗号分隔"
           value={form.allowed_tool_prefixes}
           onChange={(event) => setForm({ ...form, allowed_tool_prefixes: event.target.value })}
         />
-        <button className="btn" type="button" onClick={() => create.mutate()}>
+        <button
+          className="btn"
+          type="button"
+          disabled={nonePublicConflict}
+          onClick={() => create.mutate()}
+        >
           登记
         </button>
         {create.error ? <p className="error">{errorText(create.error)}</p> : null}
@@ -133,6 +193,12 @@ export function McpView({ client }: { client: ClawClient }) {
             <p className="mono">
               {server.server_id} · observed {server.runtime?.observed_state ?? "—"} · rev{" "}
               {server.latest_revision}
+              {server.latest_config?.auth_strategy
+                ? ` · ${server.latest_config.auth_strategy}`
+                : ""}
+              {server.latest_config?.network_mode
+                ? ` · ${server.latest_config.network_mode}`
+                : ""}
               {server.runtime?.last_test_at
                 ? ` · 探测 ${new Date(server.runtime.last_test_at).toLocaleString()}`
                 : ""}

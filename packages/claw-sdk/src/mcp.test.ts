@@ -53,6 +53,35 @@ describe("createMcpServer", () => {
     });
   });
 
+  it("omits credential_ref for auth_strategy none", async () => {
+    let body: string | null = null;
+    const client = new ClawClient({
+      baseUrl: "http://claw.example",
+      fetch: (async (_input, init) => {
+        body = typeof init?.body === "string" ? init.body : null;
+        return jsonResponse({
+          server_id: "local-smoke-mcp",
+          desired_state: "disabled",
+          latest_revision: 1,
+        });
+      }) as typeof fetch,
+    });
+    await createMcpServer(client, {
+      server_id: "local-smoke-mcp",
+      title: "Local Smoke MCP",
+      endpoint: "http://127.0.0.1:48080/mcp",
+      auth_strategy: "none",
+      allowed_tool_prefixes: ["demo."],
+    });
+    const payload = JSON.parse(body ?? "{}");
+    expect(payload).toMatchObject({
+      endpoint: "http://127.0.0.1:48080/mcp",
+      network_mode: "loopback",
+      auth_strategy: "none",
+    });
+    expect(payload.credential_ref).toBeUndefined();
+  });
+
   it("keeps an explicit network_mode", async () => {
     let body: string | null = null;
     const client = new ClawClient({

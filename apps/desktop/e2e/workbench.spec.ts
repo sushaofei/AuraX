@@ -36,7 +36,10 @@ test("critical views load without hitting internal APIs or AuraMCP", async ({ pa
   await expect(page.getByRole("tab", { name: "全部" })).toBeVisible();
 
   await page.getByRole("button", { name: "MCP" }).click();
+  await expect(page.getByLabel("认证方式")).toBeVisible();
   await expect(page.getByPlaceholder("credential_ref（必填引用，不是明文）")).toBeVisible();
+  await page.getByLabel("认证方式").selectOption("none");
+  await expect(page.getByPlaceholder("credential_ref（必填引用，不是明文）")).toHaveCount(0);
   await expect(page.locator("input[type=password]")).toHaveCount(0);
 
   await page.getByRole("button", { name: "Skill" }).click();

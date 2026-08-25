@@ -21,13 +21,18 @@ export function listMcpTools(client: ClawClient, serverId: string) {
 
 export type McpNetworkMode = "public" | "private" | "loopback";
 
+export type McpAuthStrategy =
+  | "workload_trusted_context"
+  | "oauth_client_credentials"
+  | "none";
+
 export type McpServerConfigInput = {
   server_id: string;
   title: string;
   endpoint: string;
   network_mode?: McpNetworkMode;
   protocol_revision?: string;
-  auth_strategy?: "workload_trusted_context" | "oauth_client_credentials" | "none";
+  auth_strategy?: McpAuthStrategy;
   credential_ref?: string | null;
   allowed_tool_prefixes?: string[];
 };
