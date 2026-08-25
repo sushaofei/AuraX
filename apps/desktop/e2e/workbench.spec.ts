@@ -63,3 +63,17 @@ test("creating a chat session does not cancel when leaving the view", async ({ p
   await expect(page.getByRole("heading", { name: "历史" })).toBeVisible();
   expect(traffic.cancels).toBe(0);
 });
+
+test("approval refreshes the task version and shows submission feedback", async ({ page }) => {
+  const traffic = await mockClaw(page, { approval: true });
+  await page.goto("/");
+  await page.getByPlaceholder("要 AuraClaw 做什么？").fill("调用工具");
+  await page.getByRole("button", { name: "开始" }).click();
+  await expect(page.getByText("待人审")).toBeVisible();
+
+  await page.getByRole("button", { name: "批准" }).click();
+
+  await expect(page.getByText("审批已提交，等待 Runtime 恢复…")).toBeVisible();
+  expect(traffic.approvals).toBe(1);
+  expect(traffic.approvalExpectedVersions).toEqual(["21"]);
+});

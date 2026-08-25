@@ -172,20 +172,30 @@ export function ChatView({
   });
 
   const approve = useMutation({
-    mutationFn: async (decision: "approved" | "rejected") => {
-      const pending = transcript.data?.pending_approval;
-      if (!sessionId || !pending || !task.data) {
-        return;
+    mutationFn: async ({
+      approvalId,
+      decision,
+    }: {
+      approvalId: string;
+      decision: "approved" | "rejected";
+    }) => {
+      if (!sessionId) {
+        throw new Error("Session 不存在，无法提交审批");
       }
-      await respondToApproval(
+      const current = (await getTask(client, sessionId)).body;
+      const expectedVersion = Math.max(
+        current.projection_version,
+        transcript.data?.projection_version ?? 0,
+      );
+      return respondToApproval(
         client,
         sessionId,
-        pending.approval_id,
+        approvalId,
         decision,
-        task.data.projection_version,
+        expectedVersion,
       );
     },
-    onSuccess: () => queryClient.invalidateQueries(),
+    onSettled: () => queryClient.invalidateQueries(),
   });
 
   const waiting = task.data?.status === "waiting_for_human";
@@ -273,14 +283,43 @@ export function ChatView({
           <strong>待人审</strong>
           <p>{transcript.data.pending_approval.reason}</p>
           <p className="mono">{transcript.data.pending_approval.tool_name}</p>
+          {approve.isSuccess &&
+          approve.variables?.approvalId === transcript.data.pending_approval.approval_id ? (
+            <p className="mono">审批已提交，等待 Runtime 恢复…</p>
+          ) : null}
           <div className="row">
-            <button className="btn amber" type="button" onClick={() => approve.mutate("approved")}>
-              批准
+            <button
+              className="btn amber"
+              type="button"
+              disabled={approve.isPending}
+              onClick={() =>
+                approve.mutate({
+                  approvalId: transcript.data.pending_approval!.approval_id,
+                  decision: "approved",
+                })
+              }
+            >
+              {approve.isPending && approve.variables?.decision === "approved"
+                ? "提交中…"
+                : "批准"}
             </button>
-            <button className="btn danger" type="button" onClick={() => approve.mutate("rejected")}>
-              拒绝
+            <button
+              className="btn danger"
+              type="button"
+              disabled={approve.isPending}
+              onClick={() =>
+                approve.mutate({
+                  approvalId: transcript.data.pending_approval!.approval_id,
+                  decision: "rejected",
+                })
+              }
+            >
+              {approve.isPending && approve.variables?.decision === "rejected"
+                ? "提交中…"
+                : "拒绝"}
             </button>
           </div>
+          {approve.error ? <p className="error">审批提交失败：{errorText(approve.error)}</p> : null}
         </div>
       ) : null}
       <div className="composer stack">
