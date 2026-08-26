@@ -11,6 +11,7 @@ AuraX 是 AuraClaw 的 **macOS 工作台**：发命令、查投影、订 SSE、�
 - Session 历史：`GET /v1/tasks?kind=chat`，打开即恢复。关窗口 ≠ 取消任务。
 - MCP 管理：登记 / 测试 / 启停 / 对账 / 退役 / 列出 Catalog tools。Secret 只填 `credential_ref`。
 - Skill 管理：只读目录 + 启停；对话页勾选「允许使用的 Skill」（租户目录，下一轮 Run 生效）。无发布入口。
+- 对话执行轨迹：右侧可折叠面板按 Run 展示模型、MCP/Tool、Skill、Resource、审批与状态节点；历史以 AuraClaw Activity Query 为准。
 
 ## 明确不做
 
@@ -46,3 +47,4 @@ packages/claw-sdk     AuraClaw HTTP/SSE 客户端（无 React / Tauri）
 UI 不直接 `fetch`。所有请求经 `@aurax/claw-sdk`，由 SDK 注入开发身份头与幂等键。
 
 macOS 打包先用 ad-hoc 签名，真实 Developer ID / 公证见 `docs/macos-signing.md`。阶段门禁见 `docs/开发阶段校验清单.md`。
+执行轨迹的信息架构、恢复与安全规则见 `docs/对话执行轨迹产品方案.md`。

@@ -69,6 +69,39 @@ export type Transcript = {
   pending_approval: PendingApproval | null;
 };
 
+export type ActivityNode = {
+  id: string;
+  type: string;
+  status: string;
+  title: string;
+  summary: string;
+  sequence: number;
+  updated_version: number;
+  run_id: string | null;
+  started_at: string;
+  completed_at: string | null;
+  duration_ms: number | null;
+  detail: unknown;
+  correlation: {
+    event_ids: string[];
+    model_call_id?: string;
+    tool_invocation_id?: string;
+    skill_activation_id?: string;
+    approval_id?: string;
+    capability_id?: string;
+    [key: string]: unknown;
+  };
+};
+
+export type ActivityPage = {
+  session_id: string;
+  projection_version: number;
+  source_version: number;
+  nodes: ActivityNode[];
+  next_after_version: number;
+  has_more: boolean;
+};
+
 export type CommandAccepted = {
   session_id: string;
   run_id: string | null;

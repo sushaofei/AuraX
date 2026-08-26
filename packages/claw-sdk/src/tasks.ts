@@ -3,6 +3,7 @@ import { newIdempotencyKey } from "./errors.js";
 import type {
   CommandAccepted,
   CreateTaskInput,
+  ActivityPage,
   TaskAccepted,
   TaskList,
   TaskView,
@@ -56,6 +57,19 @@ export function getTranscript(
   sessionId: string,
 ): Promise<{ body: Transcript }> {
   return client.request<Transcript>("GET", `/v1/tasks/${sessionId}/transcript`);
+}
+
+export function getActivity(
+  client: ClawClient,
+  sessionId: string,
+  options: { afterVersion?: number; limit?: number } = {},
+): Promise<{ body: ActivityPage; headers: Headers }> {
+  return client.request<ActivityPage>("GET", `/v1/tasks/${sessionId}/activity`, {
+    query: {
+      after_version: options.afterVersion ?? 0,
+      limit: options.limit ?? 200,
+    },
+  });
 }
 
 export function getResult(

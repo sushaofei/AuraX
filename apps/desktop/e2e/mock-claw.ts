@@ -115,6 +115,24 @@ export async function mockClaw(
       });
       return;
     }
+    if (url.pathname === "/v1/tasks/ses_approval/activity") {
+      await json({
+        session_id: "ses_approval",
+        projection_version: 21,
+        source_version: 21,
+        next_after_version: 21,
+        has_more: false,
+        nodes: [
+          activityNode(1, "run", "waiting", "Run run_approval", "run_approval"),
+          activityNode(2, "tool", "waiting", "auramcp.about.auraclaw", "run_approval", {
+            source: "mcp",
+            server_id: "auramcp",
+          }),
+          activityNode(3, "approval", "waiting", "等待人工审批", "run_approval"),
+        ],
+      });
+      return;
+    }
     if (url.pathname === "/v1/tasks/ses_e2e") {
       await json({
         tenant_id: "platform",
@@ -152,6 +170,32 @@ export async function mockClaw(
       });
       return;
     }
+    if (url.pathname === "/v1/tasks/ses_e2e/activity") {
+      await json({
+        session_id: "ses_e2e",
+        projection_version: 12,
+        source_version: 12,
+        next_after_version: 12,
+        has_more: false,
+        nodes: [
+          activityNode(1, "user_prompt", "completed", "User prompt", null),
+          activityNode(2, "run", "completed", "Run run_e2e", "run_e2e"),
+          activityNode(3, "model_input", "completed", "Model input", "run_e2e", {
+            message_count: 1,
+            input_digest: "sha256:e2e",
+          }),
+          activityNode(4, "skill", "completed", "product-answer", "run_e2e", {
+            skill_version: "1.0.0",
+          }),
+          activityNode(5, "tool", "completed", "auramcp.about.auraclaw", "run_e2e", {
+            source: "mcp",
+            server_id: "auramcp",
+          }),
+          activityNode(6, "model_output", "completed", "Model output", "run_e2e"),
+        ],
+      });
+      return;
+    }
     if (url.pathname.startsWith("/v1/streams/")) {
       await route.fulfill({
         status: 200,
@@ -165,4 +209,29 @@ export async function mockClaw(
   });
 
   return traffic;
+}
+
+function activityNode(
+  sequence: number,
+  type: string,
+  status: string,
+  title: string,
+  runId: string | null,
+  detail: unknown = {},
+) {
+  return {
+    id: `activity-${type}-${sequence}`,
+    type,
+    status,
+    title,
+    summary: `${title} summary`,
+    sequence,
+    updated_version: sequence,
+    run_id: runId,
+    started_at: `2026-08-25T04:13:${String(sequence).padStart(2, "0")}Z`,
+    completed_at: status === "completed" ? `2026-08-25T04:13:${String(sequence).padStart(2, "0")}Z` : null,
+    duration_ms: status === "completed" ? 120 : null,
+    detail,
+    correlation: { event_ids: [`evt-${sequence}`] },
+  };
 }

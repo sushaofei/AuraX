@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { ClawClient } from "./client.js";
-import { followUp } from "./tasks.js";
+import { followUp, getActivity } from "./tasks.js";
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -63,5 +63,31 @@ describe("followUp", () => {
     });
     await followUp(client, "ses_1", "later", 4, "pending");
     expect(methods).toEqual(["POST http://claw.example/v1/sessions/ses_1/messages"]);
+  });
+});
+
+describe("getActivity", () => {
+  it("uses the canonical aggregate-version cursor", async () => {
+    let requested = "";
+    const client = new ClawClient({
+      baseUrl: "http://claw.example",
+      fetch: (async (input) => {
+        requested = String(input);
+        return jsonResponse({
+          session_id: "ses_1",
+          projection_version: 8,
+          source_version: 9,
+          nodes: [],
+          next_after_version: 9,
+          has_more: false,
+        });
+      }) as typeof fetch,
+    });
+
+    const result = await getActivity(client, "ses_1", { afterVersion: 7, limit: 50 });
+    expect(requested).toBe(
+      "http://claw.example/v1/tasks/ses_1/activity?after_version=7&limit=50",
+    );
+    expect(result.body.next_after_version).toBe(9);
   });
 });

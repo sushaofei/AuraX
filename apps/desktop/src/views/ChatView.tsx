@@ -16,7 +16,15 @@ import {
   type TranscriptMessage,
 } from "@aurax/claw-sdk";
 import { useEffect, useState } from "react";
-import { loadDraft, loadLastEventId, saveDraft, saveLastEventId } from "../cache";
+import {
+  loadDraft,
+  loadLastEventId,
+  loadTraceOpen,
+  saveDraft,
+  saveLastEventId,
+  saveTraceOpen,
+} from "../cache";
+import { ExecutionTracePanel } from "../components/ExecutionTracePanel";
 import { MarkdownBody } from "../components/MarkdownBody";
 import { errorText, isNotFound } from "../lib/errors";
 
@@ -36,10 +44,16 @@ export function ChatView({
   const [draft, setDraft] = useState(loadDraft);
   const [streamNote, setStreamNote] = useState("");
   const [optimistic, setOptimistic] = useState<string[]>([]);
+  const [traceOpen, setTraceOpen] = useState(loadTraceOpen);
+  const [traceCount, setTraceCount] = useState(0);
 
   useEffect(() => {
     saveDraft(draft);
   }, [draft]);
+
+  useEffect(() => {
+    saveTraceOpen(traceOpen);
+  }, [traceOpen]);
 
   const task = useQuery({
     queryKey: ["task", client.baseUrl, sessionId],
@@ -94,6 +108,9 @@ export function ChatView({
           }
           await queryClient.invalidateQueries({ queryKey: ["transcript"] });
           await queryClient.invalidateQueries({ queryKey: ["task"] });
+          await queryClient.invalidateQueries({
+            queryKey: ["activity", client.baseUrl, sessionId],
+          });
         }
       } catch (error) {
         if (!abort.signal.aborted) {
@@ -204,11 +221,23 @@ export function ChatView({
   const missing = isNotFound(task.error);
 
   return (
-    <section className="bench">
+    <div className={`chat-workspace ${traceOpen ? "trace-open" : "trace-closed"}`}>
+      <section className="bench">
       <p className="kicker">Live bench</p>
       <div className="page-head">
         <h1>对话</h1>
         <div className="row">
+          <button
+            className="btn ghost"
+            type="button"
+            aria-expanded={Boolean(sessionId && !missing && traceOpen)}
+            aria-controls="execution-trace"
+            disabled={!sessionId || missing}
+            onClick={() => setTraceOpen((open) => !open)}
+          >
+            {traceOpen ? "收起轨迹" : "执行轨迹"}
+            {traceCount > 0 ? ` · ${traceCount}` : ""}
+          </button>
           <button className="btn ghost" type="button" onClick={() => onSession(null)}>
             新开一轮
           </button>
@@ -357,7 +386,19 @@ export function ChatView({
         {close.error ? <p className="error">{errorText(close.error)}</p> : null}
         {cancel.error ? <p className="error">{errorText(cancel.error)}</p> : null}
       </div>
-    </section>
+      </section>
+      {sessionId && !missing ? (
+        <ExecutionTracePanel
+          key={`${client.baseUrl}:${sessionId}`}
+          client={client}
+          sessionId={sessionId}
+          open={traceOpen}
+          live={!streamIdle}
+          onClose={() => setTraceOpen(false)}
+          onCountChange={setTraceCount}
+        />
+      ) : null}
+    </div>
   );
 }
 
