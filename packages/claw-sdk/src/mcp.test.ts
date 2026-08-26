@@ -18,6 +18,15 @@ describe("inferMcpNetworkMode", () => {
     expect(inferMcpNetworkMode("  http://127.0.0.1:8020/mcp  ")).toBe("loopback");
   });
 
+  it("uses private for RFC1918 and link-local addresses", () => {
+    expect(inferMcpNetworkMode("http://10.244.16.131:48088/rpc-api/agent-runtime/mcp")).toBe(
+      "private",
+    );
+    expect(inferMcpNetworkMode("http://192.168.1.10/mcp")).toBe("private");
+    expect(inferMcpNetworkMode("http://172.16.0.5/mcp")).toBe("private");
+    expect(inferMcpNetworkMode("http://169.254.10.1/mcp")).toBe("private");
+  });
+
   it("keeps public for remote HTTPS endpoints", () => {
     expect(inferMcpNetworkMode("https://mcp.example/mcp")).toBe("public");
     expect(inferMcpNetworkMode("https://auramcp.internal/mcp")).toBe("public");
@@ -80,6 +89,35 @@ describe("createMcpServer", () => {
       auth_strategy: "none",
     });
     expect(payload.credential_ref).toBeUndefined();
+  });
+
+  it("registers private endpoints with allowed_cidrs for auth_strategy none", async () => {
+    let body: string | null = null;
+    const client = new ClawClient({
+      baseUrl: "http://claw.example",
+      fetch: (async (_input, init) => {
+        body = typeof init?.body === "string" ? init.body : null;
+        return jsonResponse({
+          server_id: "chaintowermcp_runtime_test",
+          desired_state: "disabled",
+          latest_revision: 1,
+        });
+      }) as typeof fetch,
+    });
+    await createMcpServer(client, {
+      server_id: "chaintowermcp_runtime_test",
+      title: "ChainTowerMCPRuntimeTest",
+      endpoint: "http://10.244.16.131:48088/rpc-api/agent-runtime/mcp",
+      protocol_revision: "2025-06-18",
+      auth_strategy: "none",
+      allowed_tool_prefixes: ["price_insight."],
+    });
+    expect(JSON.parse(body ?? "{}")).toMatchObject({
+      endpoint: "http://10.244.16.131:48088/rpc-api/agent-runtime/mcp",
+      network_mode: "private",
+      auth_strategy: "none",
+      allowed_cidrs: ["10.244.16.131/32"],
+    });
   });
 
   it("sends an explicit protocol_revision", async () => {

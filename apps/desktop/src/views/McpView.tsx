@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  buildMcpServerConfigPayload,
   inferMcpNetworkMode,
   listMcpServers,
   listMcpTools,
@@ -82,27 +83,24 @@ function buildMcpPayload(form: McpFormState, endpoint: string): McpServerConfigI
     .split(",")
     .map((part) => part.trim())
     .filter(Boolean);
-  if (form.auth_strategy === "none") {
-    return {
-      server_id: form.server_id.trim(),
-      title: form.title.trim(),
-      endpoint,
-      protocol_revision: form.protocol_revision,
-      network_mode: inferMcpNetworkMode(endpoint),
-      auth_strategy: "none",
-      allowed_tool_prefixes: allowedToolPrefixes,
-    };
-  }
-  return {
+  const base = {
     server_id: form.server_id.trim(),
     title: form.title.trim(),
     endpoint,
     protocol_revision: form.protocol_revision,
-    network_mode: inferMcpNetworkMode(endpoint),
-    auth_strategy: "workload_trusted_context",
-    credential_ref: form.credential_ref.trim(),
     allowed_tool_prefixes: allowedToolPrefixes,
   };
+  if (form.auth_strategy === "none") {
+    return buildMcpServerConfigPayload({
+      ...base,
+      auth_strategy: "none",
+    });
+  }
+  return buildMcpServerConfigPayload({
+    ...base,
+    auth_strategy: "workload_trusted_context",
+    credential_ref: form.credential_ref.trim(),
+  });
 }
 
 export function McpView({ client }: { client: ClawClient }) {
@@ -188,7 +186,9 @@ export function McpView({ client }: { client: ClawClient }) {
           <p className="mono">
             {networkMode === "loopback"
               ? "将以 loopback 登记（相对 Credential Proxy，不是这台 Mac）"
-              : "将以 public 登记（需 HTTPS 公网地址）"}
+              : networkMode === "private"
+                ? "将以 private 登记（内网地址，可配合无远端认证）"
+                : "将以 public 登记（需 HTTPS 公网地址）"}
           </p>
         ) : null}
         <label className="stack" style={{ gap: 6 }}>

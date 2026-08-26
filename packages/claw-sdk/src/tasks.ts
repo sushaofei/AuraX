@@ -1,5 +1,5 @@
 import type { ClawClient } from "./client.js";
-import { newIdempotencyKey } from "./errors.js";
+import { ClawApiError, newIdempotencyKey } from "./errors.js";
 import type {
   CommandAccepted,
   CreateTaskInput,
@@ -107,6 +107,46 @@ export function requestRun(
 
 const RUNNABLE_SESSION_STATUSES = new Set(["created", "ready", "paused"]);
 
+async function appendMessageWithRetry(
+  client: ClawClient,
+  sessionId: string,
+  message: string,
+  expectedVersion: number,
+): Promise<{ body: CommandAccepted; version: number }> {
+  try {
+    const appended = await appendMessage(client, sessionId, message, expectedVersion);
+    return { body: appended.body, version: expectedVersion };
+  } catch (error) {
+    if (!(error instanceof ClawApiError) || error.code !== "version_conflict") {
+      throw error;
+    }
+    const latest = await getTask(client, sessionId);
+    const refreshed = await appendMessage(
+      client,
+      sessionId,
+      message,
+      latest.body.projection_version,
+    );
+    return { body: refreshed.body, version: latest.body.projection_version };
+  }
+}
+
+async function requestRunWithRetry(
+  client: ClawClient,
+  sessionId: string,
+  expectedVersion: number,
+): Promise<{ body: CommandAccepted }> {
+  try {
+    return await requestRun(client, sessionId, expectedVersion);
+  } catch (error) {
+    if (!(error instanceof ClawApiError) || error.code !== "version_conflict") {
+      throw error;
+    }
+    const latest = await getTask(client, sessionId);
+    return requestRun(client, sessionId, latest.body.projection_version);
+  }
+}
+
 export async function followUp(
   client: ClawClient,
   sessionId: string,
@@ -114,13 +154,13 @@ export async function followUp(
   expectedVersion: number,
   sessionStatus: string,
 ): Promise<{ body: CommandAccepted }> {
-  const appended = await appendMessage(client, sessionId, message, expectedVersion);
+  const appended = await appendMessageWithRetry(client, sessionId, message, expectedVersion);
   if (!RUNNABLE_SESSION_STATUSES.has(sessionStatus)) {
-    return appended;
+    return { body: appended.body };
   }
   const latest = await getTask(client, sessionId);
-  const runVersion = Math.max(latest.body.projection_version, expectedVersion + 1);
-  return requestRun(client, sessionId, runVersion);
+  const runVersion = Math.max(latest.body.projection_version, appended.version + 1);
+  return requestRunWithRetry(client, sessionId, runVersion);
 }
 
 export function cancelTask(

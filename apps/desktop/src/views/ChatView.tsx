@@ -86,6 +86,13 @@ export function ChatView({
     !RESUMABLE.has(sessionStatus ?? "");
 
   useEffect(() => {
+    if (!sessionId || !streamIdle) {
+      return;
+    }
+    void queryClient.invalidateQueries({ queryKey: ["task", client.baseUrl, sessionId] });
+  }, [client.baseUrl, queryClient, sessionId, streamIdle]);
+
+  useEffect(() => {
     if (!sessionId || isNotFound(task.error) || streamIdle) {
       return;
     }
@@ -128,16 +135,18 @@ export function ChatView({
         onSession(created.body.session_id);
         return created.body;
       }
-      const current = task.data ?? (await getTask(client, sessionId)).body;
+      const current = (await getTask(client, sessionId)).body;
       if (current.status === "waiting_for_human") {
         throw new Error("当前等待人审，不能当普通追问发送");
       }
       if (current.status === "closed") {
         throw new Error("Session 已结束，请新开一轮");
       }
-      return (
-        await followUp(client, sessionId, text, current.projection_version, current.status)
-      ).body;
+      const expectedVersion = Math.max(
+        current.projection_version,
+        transcript.data?.projection_version ?? 0,
+      );
+      return (await followUp(client, sessionId, text, expectedVersion, current.status)).body;
     },
     onMutate: (text) => {
       setOptimistic((prev) => [...prev, text]);
@@ -160,30 +169,33 @@ export function ChatView({
 
   const cancel = useMutation({
     mutationFn: async () => {
-      if (!sessionId || !task.data) {
+      if (!sessionId) {
         return;
       }
-      await cancelTask(client, sessionId, task.data.projection_version);
+      const current = (await getTask(client, sessionId)).body;
+      await cancelTask(client, sessionId, current.projection_version);
     },
     onSuccess: () => queryClient.invalidateQueries(),
   });
 
   const resume = useMutation({
     mutationFn: async () => {
-      if (!sessionId || !task.data) {
+      if (!sessionId) {
         return;
       }
-      await resumeTask(client, sessionId, task.data.projection_version);
+      const current = (await getTask(client, sessionId)).body;
+      await resumeTask(client, sessionId, current.projection_version);
     },
     onSuccess: () => queryClient.invalidateQueries(),
   });
 
   const close = useMutation({
     mutationFn: async () => {
-      if (!sessionId || !task.data) {
+      if (!sessionId) {
         return;
       }
-      await closeSession(client, sessionId, task.data.projection_version);
+      const current = (await getTask(client, sessionId)).body;
+      await closeSession(client, sessionId, current.projection_version);
     },
     onSuccess: () => queryClient.invalidateQueries(),
   });

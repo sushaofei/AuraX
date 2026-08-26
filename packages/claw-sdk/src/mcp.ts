@@ -61,28 +61,95 @@ export type McpServerConfigInput = {
   auth_strategy?: McpAuthStrategy;
   credential_ref?: string | null;
   allowed_tool_prefixes?: string[];
+  allowed_cidrs?: string[];
 };
 
 export type McpServerConfigUpdate = Omit<McpServerConfigInput, "server_id">;
 
 const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "::1"]);
 
-/** AuraClaw treats loopback as the Credential Proxy namespace, not the AuraX Mac. */
-export function inferMcpNetworkMode(endpoint: string): Exclude<McpNetworkMode, "private"> {
+function parseIpv4(hostname: string): [number, number, number, number] | null {
+  const match = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(hostname);
+  if (!match) {
+    return null;
+  }
+  const octets = match.slice(1).map(Number) as [number, number, number, number];
+  return octets.some((octet) => octet > 255) ? null : octets;
+}
+
+function isPrivateIpv4(hostname: string): boolean {
+  const octets = parseIpv4(hostname);
+  if (!octets) {
+    return false;
+  }
+  const [first, second] = octets;
+  return (
+    first === 10 ||
+    (first === 172 && second >= 16 && second <= 31) ||
+    (first === 192 && second === 168) ||
+    (first === 169 && second === 254)
+  );
+}
+
+function isPrivateIpv6(hostname: string): boolean {
+  const normalized = hostname.toLowerCase();
+  return (
+    normalized.startsWith("fc") ||
+    normalized.startsWith("fd") ||
+    normalized.startsWith("fe8") ||
+    normalized.startsWith("fe9") ||
+    normalized.startsWith("fea") ||
+    normalized.startsWith("feb")
+  );
+}
+
+function endpointHostname(endpoint: string): string | null {
   try {
-    const hostname = new URL(endpoint.trim()).hostname.replace(/^\[|\]$/g, "").toLowerCase();
-    return LOOPBACK_HOSTS.has(hostname) ? "loopback" : "public";
+    return new URL(endpoint.trim()).hostname.replace(/^\[|\]$/g, "").toLowerCase();
   } catch {
+    return null;
+  }
+}
+
+/** AuraClaw treats loopback as the Credential Proxy namespace, not the AuraX Mac. */
+export function inferMcpNetworkMode(endpoint: string): McpNetworkMode {
+  const hostname = endpointHostname(endpoint);
+  if (!hostname) {
     return "public";
   }
+  if (LOOPBACK_HOSTS.has(hostname)) {
+    return "loopback";
+  }
+  if (isPrivateIpv4(hostname) || isPrivateIpv6(hostname)) {
+    return "private";
+  }
+  return "public";
+}
+
+export function inferMcpAllowedCidrs(
+  endpoint: string,
+  networkMode: McpNetworkMode = inferMcpNetworkMode(endpoint),
+): string[] {
+  if (networkMode !== "private") {
+    return [];
+  }
+  const hostname = endpointHostname(endpoint);
+  if (!hostname || (!isPrivateIpv4(hostname) && !isPrivateIpv6(hostname))) {
+    return [];
+  }
+  return [`${hostname}/32`];
 }
 
 export function buildMcpServerConfigPayload(
   config: McpServerConfigInput,
 ): McpServerConfigInput & { network_mode: McpNetworkMode } {
+  const network_mode = config.network_mode ?? inferMcpNetworkMode(config.endpoint);
+  const allowed_cidrs =
+    config.allowed_cidrs ?? inferMcpAllowedCidrs(config.endpoint, network_mode);
   return {
     ...config,
-    network_mode: config.network_mode ?? inferMcpNetworkMode(config.endpoint),
+    network_mode,
+    ...(allowed_cidrs.length > 0 ? { allowed_cidrs } : {}),
   };
 }
 

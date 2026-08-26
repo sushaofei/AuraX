@@ -9,6 +9,13 @@ function jsonResponse(body: unknown, status = 200): Response {
   });
 }
 
+function conflictResponse(message: string): Response {
+  return new Response(
+    JSON.stringify({ code: "version_conflict", message, detail: null }),
+    { status: 409, headers: { "Content-Type": "application/json" } },
+  );
+}
+
 describe("followUp", () => {
   it("appends a message then requests a new run at head+1", async () => {
     const calls: { url: string; method: string; version: string | null }[] = [];
@@ -63,6 +70,40 @@ describe("followUp", () => {
     });
     await followUp(client, "ses_1", "later", 4, "pending");
     expect(methods).toEqual(["POST http://claw.example/v1/sessions/ses_1/messages"]);
+  });
+
+  it("retries follow-up after a version conflict", async () => {
+    let messageAttempts = 0;
+    const client = new ClawClient({
+      baseUrl: "http://claw.example",
+      fetch: (async (input, init) => {
+        const url = String(input);
+        if (url.endsWith("/messages")) {
+          messageAttempts += 1;
+          if (messageAttempts === 1) {
+            return conflictResponse("expected Session version 9, got 25");
+          }
+          return jsonResponse(
+            { session_id: "ses_1", run_id: "run_old", status: "ready" },
+            202,
+          );
+        }
+        if (url.includes("/v1/tasks/ses_1")) {
+          return jsonResponse({ session_id: "ses_1", projection_version: 25, status: "ready" });
+        }
+        if (url.endsWith("/runs")) {
+          return jsonResponse(
+            { session_id: "ses_1", run_id: "run_new", status: "pending" },
+            202,
+          );
+        }
+        return jsonResponse({ message: "unexpected" }, 500);
+      }) as typeof fetch,
+    });
+
+    const result = await followUp(client, "ses_1", "调用工具", 9, "ready");
+    expect(result.body.run_id).toBe("run_new");
+    expect(messageAttempts).toBe(2);
   });
 });
 
