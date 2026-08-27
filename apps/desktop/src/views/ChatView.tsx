@@ -1,35 +1,34 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  cancelTask,
-  closeSession,
+  createModelOutputDeltaState,
   createTask,
   followTaskStream,
   followUp,
   getTask,
   getTranscript,
-  listSkills,
+  mergeModelOutputDelta,
+  parseRuntimeEvent,
   respondToApproval,
-  resumeTask,
-  toggleSkill,
   type ClawClient,
-  type SkillSummary,
+  type ModelOutputDeltaState,
   type TranscriptMessage,
 } from "@aurax/claw-sdk";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
-  loadDraft,
+  clearStreamingBuffer,
+  loadChatDraft,
   loadLastEventId,
-  loadTraceOpen,
-  saveDraft,
+  loadStreamingBuffer,
+  saveChatDraft,
   saveLastEventId,
-  saveTraceOpen,
+  saveSessionOrigin,
+  saveStreamingBuffer,
 } from "../cache";
-import { ExecutionTracePanel } from "../components/ExecutionTracePanel";
 import { MarkdownBody } from "../components/MarkdownBody";
+import { SkillSelector } from "../components/SkillSelector";
 import { errorText, isNotFound } from "../lib/errors";
 
 const TERMINAL_RUN = new Set(["completed", "failed", "cancelled"]);
-const RESUMABLE = new Set(["paused", "retry_wait"]);
 
 export function ChatView({
   client,
@@ -41,19 +40,15 @@ export function ChatView({
   onSession: (id: string | null) => void;
 }) {
   const queryClient = useQueryClient();
-  const [draft, setDraft] = useState(loadDraft);
+  const [draft, setDraft] = useState(loadChatDraft);
   const [streamNote, setStreamNote] = useState("");
   const [optimistic, setOptimistic] = useState<string[]>([]);
-  const [traceOpen, setTraceOpen] = useState(loadTraceOpen);
-  const [traceCount, setTraceCount] = useState(0);
+  const [streamingText, setStreamingText] = useState("");
+  const deltaStateRef = useRef<ModelOutputDeltaState>(createModelOutputDeltaState());
 
   useEffect(() => {
-    saveDraft(draft);
+    saveChatDraft(draft);
   }, [draft]);
-
-  useEffect(() => {
-    saveTraceOpen(traceOpen);
-  }, [traceOpen]);
 
   const task = useQuery({
     queryKey: ["task", client.baseUrl, sessionId],
@@ -65,11 +60,15 @@ export function ChatView({
     },
     retry: (count, error) => !isNotFound(error) && count < 2,
   });
+
   const transcript = useQuery({
     queryKey: ["transcript", client.baseUrl, sessionId],
     queryFn: async () => (await getTranscript(client, sessionId!)).body,
     enabled: Boolean(sessionId) && !isNotFound(task.error),
-    refetchInterval: 2000,
+    refetchInterval: (query) => {
+      const status = query.state.data?.run_status;
+      return status && TERMINAL_RUN.has(status) ? false : 2000;
+    },
   });
 
   const messages: TranscriptMessage[] = transcript.data?.messages ?? [];
@@ -82,18 +81,78 @@ export function ChatView({
   const streamIdle =
     typeof runStatus === "string" &&
     TERMINAL_RUN.has(runStatus) &&
-    sessionStatus !== "waiting_for_human" &&
-    !RESUMABLE.has(sessionStatus ?? "");
+    sessionStatus !== "waiting_for_human";
 
-  useEffect(() => {
-    if (!sessionId || !streamIdle) {
+  const clearStreaming = () => {
+    deltaStateRef.current = createModelOutputDeltaState();
+    setStreamingText("");
+    if (sessionId) {
+      clearStreamingBuffer(sessionId);
+    }
+  };
+
+  const persistStreaming = (state: ModelOutputDeltaState) => {
+    if (!sessionId || !state.text) {
       return;
     }
-    void queryClient.invalidateQueries({ queryKey: ["task", client.baseUrl, sessionId] });
-  }, [client.baseUrl, queryClient, sessionId, streamIdle]);
+    saveStreamingBuffer(sessionId, {
+      text: state.text,
+      runId: state.runId,
+      seenEventIds: [...state.seenEventIds],
+    });
+  };
+
+  const restoreStreaming = (runId: string | null | undefined) => {
+    if (!sessionId) {
+      return;
+    }
+    const cached = loadStreamingBuffer(sessionId);
+    if (!cached?.text) {
+      return;
+    }
+    if (runId && cached.runId && cached.runId !== runId) {
+      clearStreamingBuffer(sessionId);
+      return;
+    }
+    deltaStateRef.current = {
+      seenEventIds: new Set(cached.seenEventIds),
+      text: cached.text,
+      runId: cached.runId,
+    };
+    setStreamingText(cached.text);
+  };
 
   useEffect(() => {
-    if (!sessionId || isNotFound(task.error) || streamIdle) {
+    if (!sessionId) {
+      clearStreaming();
+      return;
+    }
+    restoreStreaming(task.data?.run_id);
+  }, [sessionId, task.data?.run_id]);
+
+  useEffect(() => {
+    if (streamIdle && messages.some((message) => message.role === "assistant")) {
+      clearStreaming();
+    }
+  }, [streamIdle, messages]);
+
+  useEffect(() => {
+    if (!sessionId) {
+      return;
+    }
+    const refresh = () => {
+      if (document.visibilityState !== "visible") {
+        return;
+      }
+      void queryClient.invalidateQueries({ queryKey: ["transcript", client.baseUrl, sessionId] });
+      void queryClient.invalidateQueries({ queryKey: ["task", client.baseUrl, sessionId] });
+    };
+    document.addEventListener("visibilitychange", refresh);
+    return () => document.removeEventListener("visibilitychange", refresh);
+  }, [client.baseUrl, queryClient, sessionId]);
+
+  useEffect(() => {
+    if (!sessionId || isNotFound(task.error)) {
       return;
     }
     const abort = new AbortController();
@@ -110,14 +169,30 @@ export function ChatView({
           if (event.id) {
             saveLastEventId(sessionId, event.id);
           }
+          if (event.event === "stream.reset") {
+            setStreamNote("stream.reset — 回退 transcript");
+            clearStreaming();
+            await queryClient.invalidateQueries({ queryKey: ["transcript"] });
+            await queryClient.invalidateQueries({ queryKey: ["task"] });
+            continue;
+          }
           if (event.event) {
             setStreamNote(event.event);
           }
-          await queryClient.invalidateQueries({ queryKey: ["transcript"] });
-          await queryClient.invalidateQueries({ queryKey: ["task"] });
-          await queryClient.invalidateQueries({
-            queryKey: ["activity", client.baseUrl, sessionId],
-          });
+          const runtime = parseRuntimeEvent(event.data);
+          if (runtime?.type === "model.output.delta") {
+            deltaStateRef.current = mergeModelOutputDelta(deltaStateRef.current, runtime);
+            setStreamingText(deltaStateRef.current.text);
+            persistStreaming(deltaStateRef.current);
+          }
+          if (
+            runtime &&
+            (runtime.type === "model.output.completed" || runtime.type === "run.completed")
+          ) {
+            clearStreaming();
+            await queryClient.invalidateQueries({ queryKey: ["transcript"] });
+            await queryClient.invalidateQueries({ queryKey: ["task"] });
+          }
         }
       } catch (error) {
         if (!abort.signal.aborted) {
@@ -126,12 +201,14 @@ export function ChatView({
       }
     })();
     return () => abort.abort();
-  }, [client, sessionId, queryClient, task.error, streamIdle]);
+  }, [client, sessionId, queryClient, task.error]);
 
   const send = useMutation({
     mutationFn: async (text: string) => {
+      clearStreaming();
       if (!sessionId) {
         const created = await createTask(client, { goal: text, source: "chat" });
+        saveSessionOrigin(created.body.session_id, "chat");
         onSession(created.body.session_id);
         return created.body;
       }
@@ -153,7 +230,7 @@ export function ChatView({
     },
     onSuccess: () => {
       setDraft("");
-      saveDraft("");
+      saveChatDraft("");
       void queryClient.invalidateQueries();
     },
     onError: (_error, text) => {
@@ -165,39 +242,6 @@ export function ChatView({
         return [...prev.slice(0, index), ...prev.slice(index + 1)];
       });
     },
-  });
-
-  const cancel = useMutation({
-    mutationFn: async () => {
-      if (!sessionId) {
-        return;
-      }
-      const current = (await getTask(client, sessionId)).body;
-      await cancelTask(client, sessionId, current.projection_version);
-    },
-    onSuccess: () => queryClient.invalidateQueries(),
-  });
-
-  const resume = useMutation({
-    mutationFn: async () => {
-      if (!sessionId) {
-        return;
-      }
-      const current = (await getTask(client, sessionId)).body;
-      await resumeTask(client, sessionId, current.projection_version);
-    },
-    onSuccess: () => queryClient.invalidateQueries(),
-  });
-
-  const close = useMutation({
-    mutationFn: async () => {
-      if (!sessionId) {
-        return;
-      }
-      const current = (await getTask(client, sessionId)).body;
-      await closeSession(client, sessionId, current.projection_version);
-    },
-    onSuccess: () => queryClient.invalidateQueries(),
   });
 
   const approve = useMutation({
@@ -229,54 +273,22 @@ export function ChatView({
 
   const waiting = task.data?.status === "waiting_for_human";
   const closed = task.data?.status === "closed";
-  const canResume = Boolean(task.data && RESUMABLE.has(task.data.status) && !waiting);
   const missing = isNotFound(task.error);
+  const showStreaming = streamingText.length > 0;
 
   return (
-    <div className={`chat-workspace ${traceOpen ? "trace-open" : "trace-closed"}`}>
-      <section className="bench">
-      <p className="kicker">Live bench</p>
+    <section className="bench chat-stream">
+      <p className="kicker">Live chat</p>
       <div className="page-head">
         <h1>对话</h1>
         <div className="row">
-          <button
-            className="btn ghost"
-            type="button"
-            aria-expanded={Boolean(sessionId && !missing && traceOpen)}
-            aria-controls="execution-trace"
-            disabled={!sessionId || missing}
-            onClick={() => setTraceOpen((open) => !open)}
-          >
-            {traceOpen ? "收起轨迹" : "执行轨迹"}
-            {traceCount > 0 ? ` · ${traceCount}` : ""}
-          </button>
           <button className="btn ghost" type="button" onClick={() => onSession(null)}>
             新开一轮
           </button>
-          {canResume ? (
-            <button
-              className="btn amber"
-              type="button"
-              disabled={resume.isPending}
-              onClick={() => resume.mutate()}
-            >
-              继续
-            </button>
-          ) : null}
-          {sessionId && !closed && !missing ? (
-            <button
-              className="btn ghost"
-              type="button"
-              disabled={close.isPending}
-              onClick={() => close.mutate()}
-            >
-              结束 Session
-            </button>
-          ) : null}
         </div>
       </div>
       <p className="lede">
-        发送即创建 AuraClaw Session。流式只用于展示，最终以 transcript / result 为准。关闭窗口不会取消任务。
+        SSE 实时展示 model.output.delta；终态以 transcript 为准。关闭窗口不会取消任务。
       </p>
       {missing ? (
         <p className="error">
@@ -292,7 +304,9 @@ export function ChatView({
           {streamNote ? ` · ${streamNote}` : ""}
         </p>
       ) : null}
-      {!sessionId ? <p className="empty">还没有 Session。勾选要用的 Skill，输入目标后开始一轮对话。</p> : null}
+      {!sessionId ? (
+        <p className="empty">还没有 Session。勾选要用的 Skill，输入目标后开始对话。</p>
+      ) : null}
       <SkillSelector client={client} locked={closed || waiting} />
       <div className="transcript">
         {messages.map((message, index) => (
@@ -312,13 +326,13 @@ export function ChatView({
             {text}
           </div>
         ))}
+        {showStreaming ? (
+          <div className="bubble assistant streaming">
+            <span className="streaming-text">{streamingText}</span>
+            <span className="streaming-cursor" aria-hidden="true">▍</span>
+          </div>
+        ) : null}
       </div>
-      {task.data?.run_status === "completed" && task.data.result_summary ? (
-        <div className="card result-card">
-          <strong>权威结果</strong>
-          <MarkdownBody text={task.data.result_summary} />
-        </div>
-      ) : null}
       {transcript.data?.pending_approval ? (
         <div className="card">
           <strong>待人审</strong>
@@ -384,86 +398,9 @@ export function ChatView({
           >
             {sessionId ? "追问" : "开始"}
           </button>
-          <button
-            className="btn ghost"
-            type="button"
-            disabled={!sessionId || cancel.isPending || closed || missing}
-            onClick={() => cancel.mutate()}
-          >
-            取消当前 Run
-          </button>
         </div>
         {send.error ? <p className="error">{errorText(send.error)}</p> : null}
-        {resume.error ? <p className="error">{errorText(resume.error)}</p> : null}
-        {close.error ? <p className="error">{errorText(close.error)}</p> : null}
-        {cancel.error ? <p className="error">{errorText(cancel.error)}</p> : null}
       </div>
-      </section>
-      {sessionId && !missing ? (
-        <ExecutionTracePanel
-          key={`${client.baseUrl}:${sessionId}`}
-          client={client}
-          sessionId={sessionId}
-          open={traceOpen}
-          live={!streamIdle}
-          onClose={() => setTraceOpen(false)}
-          onCountChange={setTraceCount}
-        />
-      ) : null}
-    </div>
-  );
-}
-
-function SkillSelector({ client, locked }: { client: ClawClient; locked: boolean }) {
-  const queryClient = useQueryClient();
-  const skills = useQuery({
-    queryKey: ["skills", client.baseUrl],
-    queryFn: async () => (await listSkills(client)).body.skills,
-  });
-  const toggle = useMutation({
-    mutationFn: async (skill: SkillSummary) => {
-      await toggleSkill(
-        client,
-        skill.publisher,
-        skill.name,
-        skill.status === "active" ? "disable" : "enable",
-      );
-    },
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ["skills"] });
-    },
-  });
-
-  return (
-    <div className="skill-picker">
-      <p className="skill-picker-label">允许使用的 Skill</p>
-      <p className="mono">
-        勾选改的是租户目录，下一轮 Run 由 AuraClaw Resolver 解析；进行中的 Run 不受影响。
-      </p>
-      {skills.error ? <p className="error">{errorText(skills.error)}</p> : null}
-      <div className="chip-row">
-        {(skills.data ?? []).map((skill) => {
-          const pressed = skill.status === "active";
-          return (
-            <button
-              key={`${skill.publisher}/${skill.name}`}
-              type="button"
-              className="skill-chip"
-              aria-pressed={pressed}
-              disabled={locked || toggle.isPending}
-              title={skill.description || `${skill.publisher}/${skill.name}`}
-              onClick={() => toggle.mutate(skill)}
-            >
-              {skill.name}
-              <span>{pressed ? "开" : "关"}</span>
-            </button>
-          );
-        })}
-      </div>
-      {skills.data?.length === 0 ? (
-        <p className="empty">租户还没有 Skill。到 Skill 页查看目录。</p>
-      ) : null}
-      {toggle.error ? <p className="error">{errorText(toggle.error)}</p> : null}
-    </div>
+    </section>
   );
 }

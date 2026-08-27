@@ -18,6 +18,8 @@ export async function mockClaw(
     approvalExpectedVersions: [],
   };
   let taskReads = 0;
+  let e2eTaskReads = 0;
+  let e2eTranscriptReads = 0;
 
   await page.route("**/v1/**", async (route) => {
     const url = new URL(route.request().url());
@@ -60,6 +62,18 @@ export async function mockClaw(
       await json({ tasks: [], next_cursor: null });
       return;
     }
+    if (url.pathname === "/v1/tasks/sync" && route.request().method() === "POST") {
+      await json({
+        session_id: "ses_sync",
+        status: "completed",
+        wait_outcome: "completed",
+        result_summary: "同步调用结果",
+        status_url: "/v1/tasks/ses_sync",
+        result_url: "/v1/tasks/ses_sync/result",
+        stream_url: "/v1/streams/ses_sync",
+      });
+      return;
+    }
     if (url.pathname === "/v1/tasks" && route.request().method() === "POST") {
       const approval = Boolean(options.approval);
       await json(
@@ -73,6 +87,15 @@ export async function mockClaw(
         },
         202,
       );
+      return;
+    }
+    if (url.pathname === "/v1/tasks/ses_e2e/result") {
+      await json({
+        session_id: "ses_e2e",
+        status: "completed",
+        wait_outcome: "completed",
+        result_summary: "AuraClaw 是 Managed Agent 控制面。",
+      });
       return;
     }
     if (url.pathname === "/v1/tasks/ses_approval") {
@@ -134,20 +157,22 @@ export async function mockClaw(
       return;
     }
     if (url.pathname === "/v1/tasks/ses_e2e") {
+      e2eTaskReads += 1;
+      const running = e2eTaskReads < 4;
       await json({
         tenant_id: "platform",
         session_id: "ses_e2e",
         root_session_id: "ses_e2e",
         run_id: "run_e2e",
-        status: "ready",
-        run_status: "completed",
+        status: running ? "running" : "ready",
+        run_status: running ? "running" : "completed",
         goal: "介绍 AuraClaw",
         source: "chat",
         schedule_id: null,
         occurrence_id: null,
-        progress: 1,
-        current_stage: "done",
-        result_summary: "AuraClaw 是 Managed Agent 控制面。",
+        progress: running ? 0.4 : 1,
+        current_stage: running ? "model" : "done",
+        result_summary: running ? null : "AuraClaw 是 Managed Agent 控制面。",
         result_ref: null,
         artifact_refs: [],
         error: null,
@@ -157,15 +182,19 @@ export async function mockClaw(
       return;
     }
     if (url.pathname === "/v1/tasks/ses_e2e/transcript") {
+      e2eTranscriptReads += 1;
+      const running = e2eTranscriptReads < 4;
       await json({
         session_id: "ses_e2e",
         projection_version: 2,
-        status: "ready",
-        run_status: "completed",
-        messages: [
-          { role: "user", content: "介绍 AuraClaw" },
-          { role: "assistant", content: "**AuraClaw** 是控制面。" },
-        ],
+        status: running ? "running" : "ready",
+        run_status: running ? "running" : "completed",
+        messages: running
+          ? [{ role: "user", content: "介绍 AuraClaw" }]
+          : [
+              { role: "user", content: "介绍 AuraClaw" },
+              { role: "assistant", content: "**AuraClaw** 是控制面。" },
+            ],
         pending_approval: null,
       });
       return;
@@ -197,10 +226,19 @@ export async function mockClaw(
       return;
     }
     if (url.pathname.startsWith("/v1/streams/")) {
+      const deltaPayload = JSON.stringify({
+        event_id: "rte_e2e_1",
+        session_id: "ses_e2e",
+        run_id: "run_e2e",
+        sequence: 1,
+        type: "model.output.delta",
+        payload: { delta: "流式" },
+        visibility: "user",
+      });
       await route.fulfill({
         status: 200,
         contentType: "text/event-stream",
-        body: "event: ping\ndata: {}\n\n",
+        body: `event: model.output.delta\ndata: ${deltaPayload}\n\n`,
       });
       return;
     }

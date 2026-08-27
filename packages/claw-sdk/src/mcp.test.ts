@@ -1,7 +1,16 @@
 import { describe, expect, it } from "vitest";
 import { ClawApiError } from "./errors.js";
 import { ClawClient } from "./client.js";
-import { createMcpServer, inferMcpNetworkMode, listMcpTools, mcpLifecycle, saveMcpServer, updateMcpServer } from "./mcp.js";
+import {
+  createMcpServer,
+  inferMcpNetworkMode,
+  listMcpTools,
+  mcpLifecycle,
+  retireMcpServer,
+  deleteMcpServer,
+  saveMcpServer,
+  updateMcpServer,
+} from "./mcp.js";
 
 function jsonResponse(body: unknown, status = 202): Response {
   return new Response(JSON.stringify(body), {
@@ -323,6 +332,55 @@ describe("listMcpTools", () => {
     const response = await listMcpTools(client, "auramcp");
     expect(capturedUrl).toBe("http://claw.example/v1/admin/mcp-servers/auramcp/tools");
     expect(response.body.tools[0]?.canonical_name).toBe("auramcp.health.ping");
+  });
+});
+
+describe("deleteMcpServer", () => {
+  it("posts to the delete lifecycle endpoint", async () => {
+    let method: string | undefined;
+    let url: string | undefined;
+    const client = new ClawClient({
+      baseUrl: "http://claw.example",
+      fetch: (async (input, init) => {
+        method = init?.method;
+        url = String(input);
+        return jsonResponse({
+          operation_id: "op-delete",
+          server_id: "auramcp",
+          operation: "delete",
+          status: "succeeded",
+          result: { deleted: true },
+        });
+      }) as typeof fetch,
+    });
+    const response = await deleteMcpServer(client, "auramcp", 2);
+    expect(method).toBe("POST");
+    expect(url).toBe("http://claw.example/v1/admin/mcp-servers/lifecycle");
+    expect(response.body.status).toBe("succeeded");
+  });
+});
+
+describe("retireMcpServer", () => {
+  it("posts to the retire lifecycle endpoint", async () => {
+    let method: string | undefined;
+    let url: string | undefined;
+    const client = new ClawClient({
+      baseUrl: "http://claw.example",
+      fetch: (async (input, init) => {
+        method = init?.method;
+        url = String(input);
+        return jsonResponse({
+          operation_id: "op-retire",
+          server_id: "auramcp",
+          operation: "retire",
+          status: "succeeded",
+        });
+      }) as typeof fetch,
+    });
+    const response = await retireMcpServer(client, "auramcp", 2);
+    expect(method).toBe("POST");
+    expect(url).toBe("http://claw.example/v1/admin/mcp-servers/lifecycle");
+    expect(response.body.status).toBe("succeeded");
   });
 });
 

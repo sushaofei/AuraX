@@ -29,11 +29,17 @@ test("critical views load without hitting internal APIs or AuraMCP", async ({ pa
 
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "对话" })).toBeVisible();
-  await expect(page.getByText("允许使用的 Skill")).toBeVisible();
+  await expect(page.getByText("model.output.delta")).toBeVisible();
+
+  await page.getByRole("button", { name: "任务" }).click();
+  await expect(page.getByRole("heading", { name: "任务" })).toBeVisible();
+  await expect(page.getByRole("tab", { name: "异步 202 + wait" })).toBeVisible();
+  await expect(page.locator(".view-panel:not(.view-hidden) .skill-picker-label")).toBeVisible();
 
   await page.getByRole("button", { name: "历史" }).click();
   await expect(page.getByRole("heading", { name: "历史" })).toBeVisible();
-  await expect(page.getByRole("tab", { name: "全部" })).toBeVisible();
+  await expect(page.getByRole("tab", { name: "对话" })).toBeVisible();
+  await expect(page.getByRole("tab", { name: "任务" })).toBeVisible();
 
   await page.getByRole("button", { name: "MCP" }).click();
   await expect(page.getByLabel("认证方式")).toBeVisible();
@@ -58,17 +64,48 @@ test("creating a chat session does not cancel when leaving the view", async ({ p
   await page.goto("/");
   await page.getByPlaceholder("要 AuraClaw 做什么？").fill("介绍 AuraClaw");
   await page.getByRole("button", { name: "开始" }).click();
-  await expect(page.getByText("ses_e2e")).toBeVisible();
+  await expect(page.locator(".session-meta")).toContainText("ses_e2e");
   await page.getByRole("button", { name: "历史" }).click();
   await expect(page.getByRole("heading", { name: "历史" })).toBeVisible();
   expect(traffic.cancels).toBe(0);
 });
 
-test("execution trace folds product activity and can be filtered and collapsed", async ({ page }) => {
+test("chat view renders streaming delta from SSE", async ({ page }) => {
   await mockClaw(page);
   await page.goto("/");
   await page.getByPlaceholder("要 AuraClaw 做什么？").fill("介绍 AuraClaw");
   await page.getByRole("button", { name: "开始" }).click();
+  await expect(page.getByText("流式")).toBeVisible();
+});
+
+test("task view async trigger shows authoritative result", async ({ page }) => {
+  await mockClaw(page);
+  await page.goto("/");
+  await page.getByRole("button", { name: "任务" }).click();
+  await page.getByPlaceholder("POST /v1/tasks goal").fill("介绍 AuraClaw");
+  await page.getByRole("button", { name: "异步触发" }).click();
+  await expect(page.locator(".session-meta")).toContainText("ses_e2e");
+  await expect(page.locator(".result-card strong")).toContainText("权威结果");
+  await expect(page.getByText("AuraClaw 是 Managed Agent 控制面。")).toBeVisible();
+});
+
+test("task view sync invoke mode", async ({ page }) => {
+  await mockClaw(page);
+  await page.goto("/");
+  await page.getByRole("button", { name: "任务" }).click();
+  await page.getByRole("tab", { name: "同步 /tasks/sync" }).click();
+  await page.getByPlaceholder("POST /v1/tasks/sync goal").fill("sync goal");
+  await page.getByRole("button", { name: "同步调用" }).click();
+  await expect(page.getByText("ses_sync")).toBeVisible();
+  await expect(page.getByText("同步调用结果")).toBeVisible();
+});
+
+test("execution trace folds product activity and can be filtered and collapsed", async ({ page }) => {
+  await mockClaw(page);
+  await page.goto("/");
+  await page.getByRole("button", { name: "任务" }).click();
+  await page.getByPlaceholder("POST /v1/tasks goal").fill("介绍 AuraClaw");
+  await page.getByRole("button", { name: "异步触发" }).click();
   await page.getByRole("button", { name: /执行轨迹/ }).click();
 
   const trace = page.getByLabel("对话执行轨迹");

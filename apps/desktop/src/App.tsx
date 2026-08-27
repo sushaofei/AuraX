@@ -1,24 +1,35 @@
 import { ClawClient, MOCK_IDENTITY } from "@aurax/claw-sdk";
 import { useEffect, useMemo, useState } from "react";
-import { loadLastSessionId, saveLastSessionId } from "./cache";
+import {
+  loadLastChatSessionId,
+  loadLastTaskSessionId,
+  saveLastChatSessionId,
+  saveLastTaskSessionId,
+} from "./cache";
 import { loadBaseUrl, saveBaseUrl } from "./connection";
 import { ChatView } from "./views/ChatView";
 import { McpView } from "./views/McpView";
 import { SessionsView } from "./views/SessionsView";
 import { SettingsView } from "./views/SettingsView";
 import { SkillsView } from "./views/SkillsView";
+import { TaskView } from "./views/TaskView";
 
-type View = "chat" | "sessions" | "mcp" | "skills" | "settings";
+type View = "chat" | "task" | "sessions" | "mcp" | "skills" | "settings";
 
 export function App() {
   const [view, setView] = useState<View>("chat");
   const [baseUrl, setBaseUrl] = useState(loadBaseUrl);
   const client = useMemo(() => new ClawClient({ baseUrl }), [baseUrl]);
-  const [sessionId, setSessionId] = useState<string | null>(loadLastSessionId);
+  const [chatSessionId, setChatSessionId] = useState<string | null>(loadLastChatSessionId);
+  const [taskSessionId, setTaskSessionId] = useState<string | null>(loadLastTaskSessionId);
 
   useEffect(() => {
-    saveLastSessionId(sessionId);
-  }, [sessionId]);
+    saveLastChatSessionId(chatSessionId);
+  }, [chatSessionId]);
+
+  useEffect(() => {
+    saveLastTaskSessionId(taskSessionId);
+  }, [taskSessionId]);
 
   return (
     <div className="shell">
@@ -29,6 +40,7 @@ export function App() {
           {(
             [
               ["chat", "对话"],
+              ["task", "任务"],
               ["sessions", "历史"],
               ["mcp", "MCP"],
               ["skills", "Skill"],
@@ -54,15 +66,31 @@ export function App() {
         </p>
       </aside>
       <main className="stage">
-        {view === "chat" ? (
-          <ChatView client={client} sessionId={sessionId} onSession={setSessionId} />
-        ) : null}
+        <div className={view === "chat" ? "view-panel" : "view-panel view-hidden"}>
+          <ChatView
+            client={client}
+            sessionId={chatSessionId}
+            onSession={setChatSessionId}
+          />
+        </div>
+        <div className={view === "task" ? "view-panel" : "view-panel view-hidden"}>
+          <TaskView
+            client={client}
+            sessionId={taskSessionId}
+            onSession={setTaskSessionId}
+          />
+        </div>
         {view === "sessions" ? (
           <SessionsView
             client={client}
-            onOpen={(id) => {
-              setSessionId(id);
-              setView("chat");
+            onOpen={(id, target) => {
+              if (target === "task") {
+                setTaskSessionId(id);
+                setView("task");
+              } else {
+                setChatSessionId(id);
+                setView("chat");
+              }
             }}
           />
         ) : null}

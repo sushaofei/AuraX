@@ -201,6 +201,26 @@ export function saveMcpServer(
   return createMcpServer(client, config);
 }
 
+/** Retire (soft-delete) an MCP server from the Hands registry. */
+export function retireMcpServer(
+  client: ClawClient,
+  serverId: string,
+  expectedRevision: number,
+  idempotencyKey = newIdempotencyKey("mcp-retire"),
+) {
+  return mcpLifecycle(client, serverId, "retire", expectedRevision, idempotencyKey);
+}
+
+/** Hard-delete an MCP server registration from the Hands registry. */
+export function deleteMcpServer(
+  client: ClawClient,
+  serverId: string,
+  expectedRevision: number,
+  idempotencyKey = newIdempotencyKey("mcp-delete"),
+) {
+  return mcpLifecycle(client, serverId, "delete", expectedRevision, idempotencyKey);
+}
+
 export async function mcpLifecycle(
   client: ClawClient,
   serverId: string,
@@ -210,8 +230,15 @@ export async function mcpLifecycle(
 ) {
   const response = await client.request<McpOperationRecord>(
     "POST",
-    `/v1/admin/mcp-servers/${serverId}:${action}`,
-    { idempotencyKey, expectedRevision },
+    "/v1/admin/mcp-servers/lifecycle",
+    {
+      json: {
+        server_id: serverId,
+        operation: action,
+      },
+      idempotencyKey,
+      expectedRevision,
+    },
   );
   if (response.body.status === "failed") {
     const errorType = response.body.result?.error_type;

@@ -39,6 +39,7 @@ export class ClawClient {
       expectedVersion?: number;
       expectedRevision?: number;
       accept?: string;
+      headers?: Record<string, string>;
     } = {},
   ): Promise<{ status: number; body: T; headers: Headers }> {
     const url = this.resolveUrl(path);
@@ -62,6 +63,9 @@ export class ClawClient {
     }
     if (options.expectedRevision !== undefined) {
       headers["X-Expected-Revision"] = String(options.expectedRevision);
+    }
+    if (options.headers) {
+      Object.assign(headers, options.headers);
     }
     const init: RequestInit = { method, headers };
     if (options.json !== undefined) {

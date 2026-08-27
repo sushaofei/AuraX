@@ -109,6 +109,54 @@ export type CommandAccepted = {
   run_status?: string | null;
 };
 
+export type WaitOutcome =
+  | "completed"
+  | "failed"
+  | "cancelled"
+  | "timeout"
+  | "needs_human"
+  | "needs_resume";
+
+export type SyncInvokeInput = {
+  goal: string;
+  timeoutSeconds?: number;
+};
+
+export type TaskResult = {
+  session_id: string;
+  run_id?: string | null;
+  status: string;
+  session_status?: string;
+  run_status?: string | null;
+  result_summary?: string | null;
+  result_ref?: string | null;
+  artifact_refs?: unknown[];
+  error?: Record<string, unknown> | null;
+  wait_outcome?: WaitOutcome;
+  status_url?: string;
+  result_url?: string;
+  stream_url?: string;
+  code?: string;
+  message?: string;
+  [key: string]: unknown;
+};
+
+export type RuntimeEvent = {
+  event_id: string;
+  session_id: string;
+  run_id?: string;
+  sequence: number;
+  type: string;
+  payload: Record<string, unknown>;
+  visibility?: string;
+};
+
+export type ModelOutputDeltaState = {
+  seenEventIds: Set<string>;
+  text: string;
+  runId: string | null;
+};
+
 export type McpServerRecord = {
   server_id: string;
   tenant_id?: string | null;
@@ -146,7 +194,13 @@ export type McpToolList = {
   tools: McpTool[];
 };
 
-export type McpLifecycleAction = "test" | "enable" | "disable" | "reconcile" | "retire";
+export type McpLifecycleAction =
+  | "test"
+  | "enable"
+  | "disable"
+  | "reconcile"
+  | "retire"
+  | "delete";
 
 export type McpOperationRecord = {
   operation_id: string;

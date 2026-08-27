@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   buildMcpServerConfigPayload,
+  deleteMcpServer,
   inferMcpNetworkMode,
   listMcpServers,
   listMcpTools,
@@ -18,12 +19,14 @@ import {
 import { useState } from "react";
 import { errorText } from "../lib/errors";
 
-const MCP_ACTION_LABEL: Record<McpLifecycleAction, string> = {
+const MCP_ACTION_LABEL: Record<
+  Exclude<McpLifecycleAction, "retire" | "delete">,
+  string
+> = {
   test: "探测",
   enable: "启用",
   disable: "停用",
   reconcile: "对账",
-  retire: "退役",
 };
 
 const MCP_AUTH_LABEL: Record<McpAuthStrategy, string> = {
@@ -105,6 +108,7 @@ function buildMcpPayload(form: McpFormState, endpoint: string): McpServerConfigI
 
 export function McpView({ client }: { client: ClawClient }) {
   const queryClient = useQueryClient();
+  const [showRetired, setShowRetired] = useState(false);
   const servers = useQuery({
     queryKey: ["mcp", client.baseUrl],
     queryFn: async () => (await listMcpServers(client)).body.servers,
@@ -142,7 +146,7 @@ export function McpView({ client }: { client: ClawClient }) {
     },
   });
   const act = useMutation({
-    mutationFn: async (input: { server: McpServerRecord; action: McpLifecycleAction }) => {
+    mutationFn: async (input: { server: McpServerRecord; action: Exclude<McpLifecycleAction, "retire" | "delete"> }) => {
       await mcpLifecycle(client, input.server.server_id, input.action, input.server.latest_revision);
       return input.action;
     },
@@ -155,6 +159,25 @@ export function McpView({ client }: { client: ClawClient }) {
       }
     },
   });
+  const deleteServer = useMutation({
+    mutationFn: async (server: McpServerRecord) => {
+      await deleteMcpServer(client, server.server_id, server.latest_revision);
+      return server.server_id;
+    },
+    onSuccess: (deletedId) => {
+      if (form.server_id.trim() === deletedId) {
+        setForm(EMPTY_MCP_FORM);
+      }
+    },
+    onSettled: () => {
+      void queryClient.invalidateQueries({ queryKey: ["mcp"] });
+    },
+  });
+  const allServers = servers.data ?? [];
+  const visibleServers = showRetired
+    ? allServers
+    : allServers.filter((server) => server.desired_state !== "retired");
+  const retiredCount = allServers.filter((server) => server.desired_state === "retired").length;
   return (
     <section>
       <p className="kicker">Hands registry</p>
@@ -265,9 +288,21 @@ export function McpView({ client }: { client: ClawClient }) {
         </button>
         {save.error ? <p className="error">{errorText(save.error)}</p> : null}
       </div>
+      {retiredCount > 0 ? (
+        <div className="row" style={{ marginTop: 16 }}>
+          <button
+            className="btn ghost"
+            type="button"
+            aria-pressed={showRetired}
+            onClick={() => setShowRetired((current) => !current)}
+          >
+            {showRetired ? "隐藏已删除" : `显示已删除（${retiredCount}）`}
+          </button>
+        </div>
+      ) : null}
       <div className="list" style={{ marginTop: 16 }}>
         {servers.error ? <p className="error">{errorText(servers.error)}</p> : null}
-        {(servers.data ?? []).map((server) => (
+        {visibleServers.map((server) => (
           <div key={server.server_id} className="card">
             <div className="row">
               <strong>{server.latest_config?.title ?? server.server_id}</strong>
@@ -300,6 +335,9 @@ export function McpView({ client }: { client: ClawClient }) {
               client={client}
               server={server}
               busy={act.isPending}
+              deleteBusy={
+                deleteServer.isPending && deleteServer.variables?.server_id === server.server_id
+              }
               pendingAction={
                 act.isPending && act.variables?.server.server_id === server.server_id
                   ? act.variables.action
@@ -311,15 +349,20 @@ export function McpView({ client }: { client: ClawClient }) {
                   : null
               }
               onAction={(action) => act.mutate({ server, action })}
+              onDelete={() => deleteServer.mutate(server)}
               onEdit={() => setForm(formFromServer(server))}
             />
             {server.desired_state === "retired" ? (
-              <p className="mono">已退役。用同一 server_id 再点登记即可恢复。</p>
+              <p className="mono">已软删除。可重新登记恢复，或点「永久删除」从登记册移除。</p>
             ) : null}
           </div>
         ))}
-        {servers.data?.length === 0 ? <p className="empty">还没有登记 MCP Server。</p> : null}
+        {allServers.length === 0 ? <p className="empty">还没有登记 MCP Server。</p> : null}
+        {allServers.length > 0 && visibleServers.length === 0 ? (
+          <p className="empty">没有活跃的 MCP Server。点「显示已删除」查看已移除项。</p>
+        ) : null}
         {act.error ? <p className="error">{errorText(act.error)}</p> : null}
+        {deleteServer.error ? <p className="error">{errorText(deleteServer.error)}</p> : null}
       </div>
     </section>
   );
@@ -329,20 +372,25 @@ function McpServerActions({
   client,
   server,
   busy,
+  deleteBusy,
   pendingAction,
   lastAction,
   onAction,
+  onDelete,
   onEdit,
 }: {
   client: ClawClient;
   server: McpServerRecord;
   busy: boolean;
-  pendingAction: McpLifecycleAction | null;
-  lastAction: McpLifecycleAction | null;
-  onAction: (action: McpLifecycleAction) => void;
+  deleteBusy: boolean;
+  pendingAction: Exclude<McpLifecycleAction, "retire" | "delete"> | null;
+  lastAction: Exclude<McpLifecycleAction, "retire" | "delete"> | null;
+  onAction: (action: Exclude<McpLifecycleAction, "retire" | "delete">) => void;
+  onDelete: () => void;
   onEdit: () => void;
 }) {
   const [open, setOpen] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const tools = useQuery({
     queryKey: ["mcp-tools", client.baseUrl, server.server_id],
     queryFn: async () => (await listMcpTools(client, server.server_id)).body.tools,
@@ -351,12 +399,12 @@ function McpServerActions({
   return (
     <>
       <div className="row">
-        {(["test", "enable", "disable", "reconcile", "retire"] as const).map((action) => (
+        {(["test", "enable", "disable", "reconcile"] as const).map((action) => (
           <button
             key={action}
             className="btn ghost"
             type="button"
-            disabled={busy || (server.desired_state === "retired" && action !== "retire")}
+            disabled={busy || deleteBusy || server.desired_state === "retired"}
             onClick={() => onAction(action)}
           >
             {pendingAction === action ? "…" : MCP_ACTION_LABEL[action]}
@@ -365,7 +413,7 @@ function McpServerActions({
         <button
           className="btn ghost"
           type="button"
-          disabled={server.desired_state === "retired"}
+          disabled={busy || deleteBusy || server.desired_state === "retired"}
           onClick={onEdit}
         >
           填入表单
@@ -374,10 +422,59 @@ function McpServerActions({
           className="btn ghost"
           type="button"
           aria-expanded={open}
+          disabled={server.desired_state === "retired"}
           onClick={() => setOpen((current) => !current)}
         >
           {open ? "收起工具" : "工具"}
         </button>
+        {server.desired_state !== "retired" && !confirmDelete ? (
+          <button
+            className="btn danger ghost"
+            type="button"
+            disabled={busy || deleteBusy}
+            onClick={() => setConfirmDelete(true)}
+          >
+            删除
+          </button>
+        ) : null}
+        {server.desired_state === "retired" && !confirmDelete ? (
+          <button
+            className="btn danger ghost"
+            type="button"
+            disabled={busy || deleteBusy}
+            onClick={() => setConfirmDelete(true)}
+          >
+            永久删除
+          </button>
+        ) : null}
+        {confirmDelete ? (
+          <>
+            <span className="mono">
+              {server.desired_state === "retired"
+                ? `确认永久删除 ${server.server_id}？此操作不可恢复。`
+                : `确认删除 ${server.server_id}？将从登记册永久移除。`}
+            </span>
+            <button
+              className="btn danger"
+              type="button"
+              disabled={deleteBusy}
+              onClick={() => {
+                onDelete();
+                setConfirmDelete(false);
+              }}
+            >
+              {deleteBusy ? "…" : server.desired_state === "retired" ? "确认永久删除" : "确认删除"}
+            </button>
+            <button
+              className="btn ghost"
+              type="button"
+              disabled={deleteBusy}
+              onClick={() => setConfirmDelete(false)}
+            >
+              取消
+            </button>
+          </>
+        ) : null}
       </div>
       {lastAction ? <p className="mono">{MCP_ACTION_LABEL[lastAction]}成功</p> : null}
       {open ? (

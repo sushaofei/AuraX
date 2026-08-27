@@ -1,0 +1,30 @@
+# DEV_WEB test deployment (AuraX static UI + nginx /v1 uplink to AuraClaw).
+# Target host: 10.244.16.130 — AuraClaw API stays on DEV_SERVICE 10.244.16.131:8080.
+name: aurax-test
+
+services:
+  web:
+    image: ${AURAX_IMAGE:-aurax:test}
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        VITE_AURAX_UPLINK: same-origin
+    ports:
+      - "${AURAX_HTTP_PORT:-1420}:80"
+    environment:
+      AURACLAW_UPSTREAM: ${AURACLAW_UPSTREAM:-http://10.244.16.131:8080}
+      AURACLAW_ADMIN_UPSTREAM: ${AURACLAW_ADMIN_UPSTREAM:-http://10.244.16.131:8000}
+    restart: unless-stopped
+    healthcheck:
+      test:
+        - CMD
+        - wget
+        - -q
+        - -O
+        - /dev/null
+        - http://127.0.0.1/
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 10s

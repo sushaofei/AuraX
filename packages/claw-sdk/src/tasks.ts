@@ -4,8 +4,10 @@ import type {
   CommandAccepted,
   CreateTaskInput,
   ActivityPage,
+  SyncInvokeInput,
   TaskAccepted,
   TaskList,
+  TaskResult,
   TaskView,
   Transcript,
 } from "./types.js";
@@ -75,8 +77,30 @@ export function getActivity(
 export function getResult(
   client: ClawClient,
   sessionId: string,
-): Promise<{ body: Record<string, unknown>; status: number }> {
-  return client.request("GET", `/v1/tasks/${sessionId}/result`);
+  options: { wait?: boolean; timeoutSeconds?: number } = {},
+): Promise<{ body: TaskResult; status: number; headers: Headers }> {
+  return client.request<TaskResult>("GET", `/v1/tasks/${sessionId}/result`, {
+    query: {
+      wait: options.wait ? "true" : undefined,
+      timeout_seconds: options.timeoutSeconds,
+    },
+  });
+}
+
+export function syncInvokeTask(
+  client: ClawClient,
+  input: SyncInvokeInput,
+  idempotencyKey = newIdempotencyKey("sync"),
+): Promise<{ body: TaskResult; status: number; headers: Headers }> {
+  return client.request<TaskResult>("POST", "/v1/tasks/sync", {
+    idempotencyKey,
+    json: {
+      goal: input.goal,
+      ...(input.timeoutSeconds !== undefined
+        ? { timeout_seconds: input.timeoutSeconds }
+        : {}),
+    },
+  });
 }
 
 export function appendMessage(

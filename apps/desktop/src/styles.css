@@ -108,6 +108,10 @@ textarea:focus-visible {
   padding: 40px 48px 48px;
 }
 
+.view-panel.view-hidden {
+  display: none;
+}
+
 .kicker {
   font-family: "IBM Plex Mono", monospace;
   font-size: 11px;
@@ -246,6 +250,7 @@ textarea { min-height: 96px; resize: vertical; }
 .btn.ghost { background: transparent; color: var(--ink); border: 1px solid #cfc5b4; }
 .btn.amber { background: var(--amber); color: #1a1208; }
 .btn.danger { background: var(--danger); color: white; }
+.btn.danger.ghost { background: transparent; color: var(--danger); border: 1px solid var(--danger); }
 .btn:disabled { opacity: 0.45; cursor: not-allowed; }
 
 .pill {
@@ -336,6 +341,29 @@ textarea { min-height: 96px; resize: vertical; }
   overflow-x: auto;
 }
 .bubble.system { background: transparent; color: var(--mist); font-size: 13px; }
+.bubble.streaming {
+  border-color: var(--amber);
+  white-space: pre-wrap;
+}
+.streaming-cursor {
+  color: var(--amber);
+  animation: blink 1s step-end infinite;
+}
+@keyframes blink {
+  50% { opacity: 0; }
+}
+.transcript.compact { gap: 10px; margin-top: 12px; }
+.transcript.compact .bubble { padding: 12px 14px; font-size: 14px; }
+.api-card .mono { margin: 4px 0; }
+.result-json {
+  margin: 8px 0 0;
+  padding: 12px;
+  background: #f8f4ec;
+  border-radius: 8px;
+  overflow-x: auto;
+  font-size: 12px;
+  max-height: 280px;
+}
 
 .md {
   line-height: 1.65;
