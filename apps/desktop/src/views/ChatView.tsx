@@ -40,15 +40,20 @@ export function ChatView({
   onSession: (id: string | null) => void;
 }) {
   const queryClient = useQueryClient();
-  const [draft, setDraft] = useState(loadChatDraft);
+  const [draft, setDraft] = useState(() => loadChatDraft(sessionId));
   const [streamNote, setStreamNote] = useState("");
   const [optimistic, setOptimistic] = useState<string[]>([]);
   const [streamingText, setStreamingText] = useState("");
   const deltaStateRef = useRef<ModelOutputDeltaState>(createModelOutputDeltaState());
+  const activeSessionRef = useRef<string | null>(sessionId);
 
   useEffect(() => {
-    saveChatDraft(draft);
-  }, [draft]);
+    activeSessionRef.current = sessionId;
+  }, [sessionId]);
+
+  useEffect(() => {
+    saveChatDraft(draft, sessionId);
+  }, [draft, sessionId]);
 
   const task = useQuery({
     queryKey: ["task", client.baseUrl, sessionId],
@@ -83,35 +88,37 @@ export function ChatView({
     TERMINAL_RUN.has(runStatus) &&
     sessionStatus !== "waiting_for_human";
 
-  const clearStreaming = () => {
+  const clearStreaming = (targetSessionId: string | null = sessionId) => {
     deltaStateRef.current = createModelOutputDeltaState();
     setStreamingText("");
-    if (sessionId) {
-      clearStreamingBuffer(sessionId);
+    if (targetSessionId) {
+      clearStreamingBuffer(targetSessionId);
     }
   };
 
-  const persistStreaming = (state: ModelOutputDeltaState) => {
-    if (!sessionId || !state.text) {
+  const persistStreaming = (state: ModelOutputDeltaState, targetSessionId: string | null) => {
+    if (!targetSessionId || !state.text) {
       return;
     }
-    saveStreamingBuffer(sessionId, {
+    saveStreamingBuffer(targetSessionId, {
       text: state.text,
       runId: state.runId,
       seenEventIds: [...state.seenEventIds],
     });
   };
 
-  const restoreStreaming = (runId: string | null | undefined) => {
-    if (!sessionId) {
-      return;
-    }
-    const cached = loadStreamingBuffer(sessionId);
+  const restoreStreaming = (
+    targetSessionId: string,
+    runId: string | null | undefined,
+  ) => {
+    const cached = loadStreamingBuffer(targetSessionId);
     if (!cached?.text) {
+      clearStreaming(targetSessionId);
       return;
     }
     if (runId && cached.runId && cached.runId !== runId) {
-      clearStreamingBuffer(sessionId);
+      clearStreamingBuffer(targetSessionId);
+      clearStreaming(targetSessionId);
       return;
     }
     deltaStateRef.current = {
@@ -123,18 +130,38 @@ export function ChatView({
   };
 
   useEffect(() => {
+    setOptimistic([]);
+    setStreamNote("");
+    setDraft(loadChatDraft(sessionId));
     if (!sessionId) {
-      clearStreaming();
+      clearStreaming(null);
       return;
     }
-    restoreStreaming(task.data?.run_id);
+    clearStreaming(sessionId);
+    restoreStreaming(sessionId, task.data?.run_id);
+  }, [sessionId]);
+
+  useEffect(() => {
+    if (!sessionId) {
+      return;
+    }
+    restoreStreaming(sessionId, task.data?.run_id);
   }, [sessionId, task.data?.run_id]);
 
   useEffect(() => {
     if (streamIdle && messages.some((message) => message.role === "assistant")) {
       clearStreaming();
     }
-  }, [streamIdle, messages]);
+  }, [streamIdle, messages, sessionId]);
+
+  const invalidateSessionQueries = (targetSessionId: string) => {
+    void queryClient.invalidateQueries({
+      queryKey: ["transcript", client.baseUrl, targetSessionId],
+    });
+    void queryClient.invalidateQueries({
+      queryKey: ["task", client.baseUrl, targetSessionId],
+    });
+  };
 
   useEffect(() => {
     if (!sessionId) {
@@ -144,8 +171,7 @@ export function ChatView({
       if (document.visibilityState !== "visible") {
         return;
       }
-      void queryClient.invalidateQueries({ queryKey: ["transcript", client.baseUrl, sessionId] });
-      void queryClient.invalidateQueries({ queryKey: ["task", client.baseUrl, sessionId] });
+      invalidateSessionQueries(sessionId);
     };
     document.addEventListener("visibilitychange", refresh);
     return () => document.removeEventListener("visibilitychange", refresh);
@@ -155,8 +181,9 @@ export function ChatView({
     if (!sessionId || isNotFound(task.error)) {
       return;
     }
+    const streamSessionId = sessionId;
     const abort = new AbortController();
-    const lastEventId = loadLastEventId(sessionId);
+    const lastEventId = loadLastEventId(streamSessionId);
     const streamOptions: { lastEventId?: string; signal: AbortSignal } = {
       signal: abort.signal,
     };
@@ -165,15 +192,22 @@ export function ChatView({
     }
     void (async () => {
       try {
-        for await (const event of followTaskStream(client, sessionId, streamOptions)) {
+        for await (const event of followTaskStream(client, streamSessionId, streamOptions)) {
+          if (activeSessionRef.current !== streamSessionId) {
+            break;
+          }
           if (event.id) {
-            saveLastEventId(sessionId, event.id);
+            saveLastEventId(streamSessionId, event.id);
           }
           if (event.event === "stream.reset") {
             setStreamNote("stream.reset — 回退 transcript");
-            clearStreaming();
-            await queryClient.invalidateQueries({ queryKey: ["transcript"] });
-            await queryClient.invalidateQueries({ queryKey: ["task"] });
+            clearStreaming(streamSessionId);
+            await queryClient.invalidateQueries({
+              queryKey: ["transcript", client.baseUrl, streamSessionId],
+            });
+            await queryClient.invalidateQueries({
+              queryKey: ["task", client.baseUrl, streamSessionId],
+            });
             continue;
           }
           if (event.event) {
@@ -183,19 +217,23 @@ export function ChatView({
           if (runtime?.type === "model.output.delta") {
             deltaStateRef.current = mergeModelOutputDelta(deltaStateRef.current, runtime);
             setStreamingText(deltaStateRef.current.text);
-            persistStreaming(deltaStateRef.current);
+            persistStreaming(deltaStateRef.current, streamSessionId);
           }
           if (
             runtime &&
             (runtime.type === "model.output.completed" || runtime.type === "run.completed")
           ) {
-            clearStreaming();
-            await queryClient.invalidateQueries({ queryKey: ["transcript"] });
-            await queryClient.invalidateQueries({ queryKey: ["task"] });
+            clearStreaming(streamSessionId);
+            await queryClient.invalidateQueries({
+              queryKey: ["transcript", client.baseUrl, streamSessionId],
+            });
+            await queryClient.invalidateQueries({
+              queryKey: ["task", client.baseUrl, streamSessionId],
+            });
           }
         }
       } catch (error) {
-        if (!abort.signal.aborted) {
+        if (!abort.signal.aborted && activeSessionRef.current === streamSessionId) {
           setStreamNote(errorText(error));
         }
       }
@@ -228,10 +266,14 @@ export function ChatView({
     onMutate: (text) => {
       setOptimistic((prev) => [...prev, text]);
     },
-    onSuccess: () => {
+    onSuccess: (_data, _text, _context) => {
       setDraft("");
-      saveChatDraft("");
-      void queryClient.invalidateQueries();
+      saveChatDraft("", sessionId);
+      if (sessionId) {
+        invalidateSessionQueries(sessionId);
+      } else {
+        void queryClient.invalidateQueries({ queryKey: ["tasks", client.baseUrl] });
+      }
     },
     onError: (_error, text) => {
       setOptimistic((prev) => {
@@ -268,7 +310,11 @@ export function ChatView({
         expectedVersion,
       );
     },
-    onSettled: () => queryClient.invalidateQueries(),
+    onSettled: () => {
+      if (sessionId) {
+        invalidateSessionQueries(sessionId);
+      }
+    },
   });
 
   const waiting = task.data?.status === "waiting_for_human";

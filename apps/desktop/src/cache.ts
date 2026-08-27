@@ -1,7 +1,9 @@
 const LAST_CHAT_SESSION_KEY = "aurax.ui.lastChatSessionId";
 const LAST_TASK_SESSION_KEY = "aurax.ui.lastTaskSessionId";
 const CHAT_DRAFT_KEY = "aurax.ui.chatDraft";
+const CHAT_DRAFT_PREFIX = "aurax.ui.chatDraft.";
 const TASK_DRAFT_KEY = "aurax.ui.taskDraft";
+const TASK_DRAFT_PREFIX = "aurax.ui.taskDraft.";
 const LAST_EVENT_PREFIX = "aurax.ui.lastEventId.";
 const TRACE_OPEN_KEY = "aurax.ui.executionTraceOpen";
 const TRACE_FILTER_KEY = "aurax.ui.executionTraceFilter";
@@ -46,33 +48,56 @@ export function saveLastTaskSessionId(sessionId: string | null): void {
   window.localStorage.removeItem(LAST_TASK_SESSION_KEY);
 }
 
-export function loadChatDraft(): string {
+function draftStorageKey(prefix: string, legacyKey: string, sessionId: string | null): string {
+  return sessionId ? `${prefix}${sessionId}` : legacyKey;
+}
+
+export function loadChatDraft(sessionId: string | null = null): string {
+  const scoped = window.localStorage.getItem(draftStorageKey(CHAT_DRAFT_PREFIX, CHAT_DRAFT_KEY, sessionId));
+  if (scoped !== null) {
+    return scoped;
+  }
+  if (sessionId) {
+    return "";
+  }
   return window.localStorage.getItem(CHAT_DRAFT_KEY) ?? "";
 }
 
-export function saveChatDraft(draft: string): void {
+export function saveChatDraft(draft: string, sessionId: string | null = null): void {
+  const key = draftStorageKey(CHAT_DRAFT_PREFIX, CHAT_DRAFT_KEY, sessionId);
   if (draft) {
-    window.localStorage.setItem(CHAT_DRAFT_KEY, draft);
+    window.localStorage.setItem(key, draft);
     return;
   }
-  window.localStorage.removeItem(CHAT_DRAFT_KEY);
+  window.localStorage.removeItem(key);
 }
 
-export function loadTaskDraft(): string {
+export function loadTaskDraft(sessionId: string | null = null): string {
+  const scoped = window.localStorage.getItem(draftStorageKey(TASK_DRAFT_PREFIX, TASK_DRAFT_KEY, sessionId));
+  if (scoped !== null) {
+    return scoped;
+  }
+  if (sessionId) {
+    const legacy = window.localStorage.getItem(TASK_DRAFT_KEY);
+    if (legacy) {
+      return legacy;
+    }
+    return window.localStorage.getItem("aurax.ui.composerDraft") ?? "";
+  }
   const value = window.localStorage.getItem(TASK_DRAFT_KEY);
   if (value) {
     return value;
   }
-  // Migrate legacy draft
   return window.localStorage.getItem("aurax.ui.composerDraft") ?? "";
 }
 
-export function saveTaskDraft(draft: string): void {
+export function saveTaskDraft(draft: string, sessionId: string | null = null): void {
+  const key = draftStorageKey(TASK_DRAFT_PREFIX, TASK_DRAFT_KEY, sessionId);
   if (draft) {
-    window.localStorage.setItem(TASK_DRAFT_KEY, draft);
+    window.localStorage.setItem(key, draft);
     return;
   }
-  window.localStorage.removeItem(TASK_DRAFT_KEY);
+  window.localStorage.removeItem(key);
 }
 
 export function loadLastEventId(sessionId: string): string | undefined {

@@ -45,7 +45,7 @@ export function TaskView({
   onSession: (id: string | null) => void;
 }) {
   const queryClient = useQueryClient();
-  const [draft, setDraft] = useState(loadTaskDraft);
+  const [draft, setDraft] = useState(() => loadTaskDraft(sessionId));
   const [triggerMode, setTriggerMode] = useState<TriggerMode>("async");
   const [accepted, setAccepted] = useState<TaskAccepted | null>(null);
   const [invokeResult, setInvokeResult] = useState<TaskResult | null>(null);
@@ -56,8 +56,12 @@ export function TaskView({
   const [traceCount, setTraceCount] = useState(0);
 
   useEffect(() => {
-    saveTaskDraft(draft);
-  }, [draft]);
+    setDraft(loadTaskDraft(sessionId));
+  }, [sessionId]);
+
+  useEffect(() => {
+    saveTaskDraft(draft, sessionId);
+  }, [draft, sessionId]);
 
   useEffect(() => {
     saveTraceOpen(traceOpen);
