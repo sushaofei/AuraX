@@ -55,9 +55,11 @@ export function TaskView({
   const [traceOpen, setTraceOpen] = useState(loadTraceOpen);
   const [traceCount, setTraceCount] = useState(0);
 
+  /* eslint-disable react-hooks/set-state-in-effect -- session transitions restore persisted per-session draft state */
   useEffect(() => {
     setDraft(loadTaskDraft(sessionId));
   }, [sessionId]);
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   useEffect(() => {
     saveTaskDraft(draft, sessionId);

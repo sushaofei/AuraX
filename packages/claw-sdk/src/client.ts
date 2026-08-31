@@ -122,4 +122,20 @@ export class ClawClient {
     }
     return response.body;
   }
+
+  async uploadObject(
+    url: string,
+    body: BodyInit,
+    headers: Record<string, string> = {},
+  ): Promise<Response> {
+    const response = await this.fetchImpl(url, { method: "PUT", body, headers });
+    if (!response.ok) {
+      throw new ClawApiError(
+        response.status,
+        "artifact_upload_failed",
+        `Artifact upload failed (${response.status})`,
+      );
+    }
+    return response;
+  }
 }

@@ -6,15 +6,20 @@ export function SkillSelector({ client, locked }: { client: ClawClient; locked: 
   const queryClient = useQueryClient();
   const skills = useQuery({
     queryKey: ["skills", client.baseUrl],
-    queryFn: async () => (await listSkills(client)).body.skills,
+    queryFn: async () => (await listSkills(client)).body.items ?? [],
   });
   const toggle = useMutation({
     mutationFn: async (skill: SkillSummary) => {
+      if (!skill.installation) {
+        throw new Error("Skill 尚未安装，请先到 Skill 管理页安装");
+      }
+      const active = skill.installation.status === "active";
       await toggleSkill(
         client,
         skill.publisher,
         skill.name,
-        skill.status === "active" ? "disable" : "enable",
+        active ? "disable" : "enable",
+        skill.installation.revision,
       );
     },
     onSuccess: () => {
@@ -31,14 +36,14 @@ export function SkillSelector({ client, locked }: { client: ClawClient; locked: 
       {skills.error ? <p className="error">{errorText(skills.error)}</p> : null}
       <div className="chip-row">
         {(skills.data ?? []).map((skill) => {
-          const pressed = skill.status === "active";
+          const pressed = skill.availability === "available";
           return (
             <button
               key={`${skill.publisher}/${skill.name}`}
               type="button"
               className="skill-chip"
               aria-pressed={pressed}
-              disabled={locked || toggle.isPending}
+              disabled={locked || toggle.isPending || !skill.installation}
               title={skill.description || `${skill.publisher}/${skill.name}`}
               onClick={() => toggle.mutate(skill)}
             >

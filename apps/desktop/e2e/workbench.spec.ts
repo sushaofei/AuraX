@@ -49,7 +49,9 @@ test("critical views load without hitting internal APIs or AuraMCP", async ({ pa
   await expect(page.locator("input[type=password]")).toHaveCount(0);
 
   await page.getByRole("button", { name: "Skill" }).click();
-  await expect(page.getByText("没有发布入口")).toBeVisible();
+  await expect(page.getByRole("tab", { name: "Catalog" })).toBeVisible();
+  await expect(page.getByText("发布已签名 Skill 包（小包）")).toBeVisible();
+  await expect(page.getByText("AuraX 不执行或签名 Skill")).toBeVisible();
 
   await page.getByRole("button", { name: "连接" }).click();
   await expect(page.getByText("X-Tenant-ID: platform")).toBeVisible();

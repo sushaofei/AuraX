@@ -47,6 +47,7 @@ export function ChatView({
   const deltaStateRef = useRef<ModelOutputDeltaState>(createModelOutputDeltaState());
   const activeSessionRef = useRef<string | null>(sessionId);
 
+  /* eslint-disable react-hooks/set-state-in-effect -- session transitions restore persisted per-session UI state */
   useEffect(() => {
     activeSessionRef.current = sessionId;
   }, [sessionId]);
@@ -153,6 +154,7 @@ export function ChatView({
       clearStreaming();
     }
   }, [streamIdle, messages, sessionId]);
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   const invalidateSessionQueries = (targetSessionId: string) => {
     void queryClient.invalidateQueries({

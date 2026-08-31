@@ -1,13 +1,90 @@
 import type { ClawClient } from "./client.js";
 import { newIdempotencyKey } from "./errors.js";
-import type { SkillSummary } from "./types.js";
+import type {
+  SkillAdmissionMetrics,
+  SkillAdmissionRecord,
+  SkillCatalogItem,
+  SkillCatalogPage,
+  SkillInstallationRecord,
+  SkillPackageRecord,
+  SkillPublicationRecord,
+  SkillPublisherView,
+  SkillPublisherKeyRecord,
+  SkillSourceRecord,
+  SkillSourceSyncState,
+  SkillSummary,
+} from "./types.js";
+
+const segment = (value: string) => encodeURIComponent(value);
+const reasonHeaders = (reasonCode: string) => ({ "X-Reason-Code": reasonCode });
+
+export type SkillCatalogFilters = {
+  q?: string;
+  publisher?: string;
+  risk_level?: string;
+  publication_status?: string;
+  installation_status?: string;
+  source_id?: string;
+  cursor?: string;
+  limit?: number;
+};
+
+export async function listSkillCatalog(client: ClawClient, filters: SkillCatalogFilters = {}) {
+  const response = await client.request<SkillCatalogPage>("GET", "/v1/admin/skills", {
+    query: filters,
+  });
+  const items = response.body.items ?? response.body.skills;
+  return { ...response, body: { ...response.body, items } };
+}
 
 export function listSkills(client: ClawClient) {
-  return client.request<{ skills: SkillSummary[] }>("GET", "/v1/admin/skills");
+  return listSkillCatalog(client);
 }
 
 export function getSkill(client: ClawClient, publisher: string, name: string) {
-  return client.request<SkillSummary>("GET", `/v1/admin/skills/${publisher}/${name}`);
+  return client.request<SkillSummary>(
+    "GET",
+    `/v1/admin/skills/${segment(publisher)}/${segment(name)}`,
+  );
+}
+
+export type SkillManagementView = {
+  publisher: string;
+  name: string;
+  installation: SkillInstallationRecord | null;
+  versions: Array<{ publication: SkillPublicationRecord; package: SkillPackageRecord | null }>;
+};
+
+export function getSkillManagement(client: ClawClient, publisher: string, name: string) {
+  return client.request<SkillManagementView>(
+    "GET",
+    `/v1/admin/skills/${segment(publisher)}/${segment(name)}/management`,
+  );
+}
+
+export function changeSkillInstallation(
+  client: ClawClient,
+  skill: Pick<SkillCatalogItem, "publisher" | "name">,
+  action: "install" | "enable" | "disable" | "uninstall",
+  expectedRevision: number,
+  options: { reasonCode?: string; force?: boolean } = {},
+) {
+  const requestOptions: {
+    query?: Record<string, string | number | undefined>;
+    idempotencyKey: string;
+    expectedRevision: number;
+    headers?: Record<string, string>;
+  } = {
+    idempotencyKey: newIdempotencyKey(`skill-${action}`),
+    expectedRevision,
+  };
+  if (action === "uninstall" && options.force) requestOptions.query = { force: "true" };
+  if (options.reasonCode) requestOptions.headers = reasonHeaders(options.reasonCode);
+  return client.request<{ installation: SkillInstallationRecord }>(
+    "POST",
+    `/v1/admin/skills/${segment(skill.publisher)}/${segment(skill.name)}:${action}`,
+    requestOptions,
+  );
 }
 
 export function toggleSkill(
@@ -15,11 +92,352 @@ export function toggleSkill(
   publisher: string,
   name: string,
   action: "enable" | "disable",
-  idempotencyKey = newIdempotencyKey(`skill-${action}`),
+  expectedRevision: number,
+  reasonCode = action === "disable" ? "user_disabled" : undefined,
 ) {
-  return client.request<{ skills: SkillSummary[] }>(
-    "POST",
-    `/v1/admin/skills/${publisher}/${name}:${action}`,
-    { idempotencyKey },
+  return changeSkillInstallation(
+    client,
+    { publisher, name },
+    action,
+    expectedRevision,
+    reasonCode ? { reasonCode } : {},
   );
+}
+
+export function listSkillInstallations(client: ClawClient) {
+  return client.request<{ installations: SkillInstallationRecord[]; next_cursor: string | null }>(
+    "GET",
+    "/v1/admin/skill-installations",
+  );
+}
+
+export function listSkillPublications(client: ClawClient, publisher?: string, name?: string) {
+  return client.request<{ publications: SkillPublicationRecord[]; next_cursor: string | null }>(
+    "GET",
+    "/v1/admin/skill-publications",
+    { query: { publisher, name } },
+  );
+}
+
+export function listSkillPackages(client: ClawClient, publisher?: string, name?: string) {
+  return client.request<{ packages: SkillPackageRecord[]; next_cursor: string | null }>(
+    "GET",
+    "/v1/admin/skill-packages",
+    { query: { publisher, name } },
+  );
+}
+
+export type SkillSourceInput = {
+  source_id: string;
+  kind: "mcp";
+  desired_state: "enabled" | "disabled";
+  publisher_allowlist: string[];
+  credential_ref: string | null;
+  config_metadata: Record<string, unknown>;
+  priority: number;
+};
+
+export function listSkillSources(client: ClawClient) {
+  return client.request<{ sources: SkillSourceRecord[] }>("GET", "/v1/admin/skill-sources");
+}
+
+export function saveSkillSource(
+  client: ClawClient,
+  input: SkillSourceInput,
+  existing?: SkillSourceRecord | null,
+) {
+  const path = existing
+    ? `/v1/admin/skill-sources/${segment(input.source_id)}`
+    : "/v1/admin/skill-sources";
+  const requestOptions: {
+    json: SkillSourceInput;
+    idempotencyKey: string;
+    expectedRevision?: number;
+  } = {
+    json: input,
+    idempotencyKey: newIdempotencyKey(existing ? "skill-source-update" : "skill-source-create"),
+  };
+  if (existing) requestOptions.expectedRevision = existing.revision;
+  return client.request<{ source: SkillSourceRecord }>(
+    existing ? "PATCH" : "POST",
+    path,
+    requestOptions,
+  );
+}
+
+export function syncSkillSource(client: ClawClient, sourceId: string) {
+  return client.request<{ sync: Record<string, unknown> }>(
+    "POST",
+    `/v1/admin/skill-sources/${segment(sourceId)}:sync`,
+  );
+}
+
+export function getSkillSourceSyncState(client: ClawClient, sourceId: string) {
+  return client.request<{ source_id: string; sync_state: SkillSourceSyncState | null }>(
+    "GET",
+    `/v1/admin/skill-sources/${segment(sourceId)}/sync-state`,
+  );
+}
+
+export function retireSkillSource(
+  client: ClawClient,
+  source: SkillSourceRecord,
+  reasonCode: string,
+) {
+  return client.request<{ source: SkillSourceRecord }>(
+    "DELETE",
+    `/v1/admin/skill-sources/${segment(source.source_id)}`,
+    {
+      idempotencyKey: newIdempotencyKey("skill-source-retire"),
+      expectedRevision: source.revision,
+      headers: reasonHeaders(reasonCode),
+    },
+  );
+}
+
+export function listSkillPublishers(client: ClawClient) {
+  return client.request<{ publishers: SkillPublisherView[]; next_cursor: string | null }>(
+    "GET",
+    "/v1/admin/skill-publishers",
+  );
+}
+
+export function registerSkillPublisher(client: ClawClient, publisher: string, displayName: string) {
+  return client.request<SkillPublisherView>(
+    "POST",
+    `/v1/admin/skill-publishers/${segment(publisher)}`,
+    {
+      json: { display_name: displayName },
+      idempotencyKey: newIdempotencyKey("skill-publisher-register"),
+      expectedRevision: 0,
+    },
+  );
+}
+
+export function rotateSkillPublisherKey(
+  client: ClawClient,
+  view: SkillPublisherView,
+  keyId: string,
+  publicKey: string,
+) {
+  return client.request<SkillPublisherView>(
+    "POST",
+    `/v1/admin/skill-publishers/${segment(view.publisher.publisher)}/keys:rotate`,
+    {
+      json: { key_id: keyId, public_key: publicKey },
+      idempotencyKey: newIdempotencyKey("skill-publisher-key-rotate"),
+      expectedRevision: view.publisher.revision,
+    },
+  );
+}
+
+export function revokeSkillPublisherKey(
+  client: ClawClient,
+  view: SkillPublisherView,
+  key: SkillPublisherKeyRecord,
+  reasonCode: string,
+  revocationAction: "pause" | "cancel" = "cancel",
+) {
+  return client.request<SkillPublisherView>(
+    "POST",
+    `/v1/admin/skill-publishers/${segment(view.publisher.publisher)}/keys/${segment(key.key_id)}:revoke`,
+    {
+      idempotencyKey: newIdempotencyKey("skill-publisher-key-revoke"),
+      expectedRevision: key.revision,
+      headers: {
+        ...reasonHeaders(reasonCode),
+        "X-Revocation-Action": revocationAction,
+      },
+    },
+  );
+}
+
+export function changeSkillPublisherStatus(
+  client: ClawClient,
+  view: SkillPublisherView,
+  action: "suspend" | "resume" | "revoke",
+  reasonCode: string,
+  revocationAction: "pause" | "cancel" = "cancel",
+) {
+  return client.request<SkillPublisherView>(
+    "POST",
+    `/v1/admin/skill-publishers/${segment(view.publisher.publisher)}/status:${action}`,
+    {
+      idempotencyKey: newIdempotencyKey(`skill-publisher-${action}`),
+      expectedRevision: view.publisher.revision,
+      headers: {
+        ...reasonHeaders(reasonCode),
+        ...(action === "revoke" ? { "X-Revocation-Action": revocationAction } : {}),
+      },
+    },
+  );
+}
+
+export function publishSkillFiles(
+  client: ClawClient,
+  sourceId: string,
+  files: Record<string, string>,
+) {
+  return client.request<SkillCatalogItem>("POST", "/v1/admin/skill-publications", {
+    json: { source_id: sourceId, activate: true, files },
+    idempotencyKey: newIdempotencyKey("skill-publish"),
+    expectedRevision: 0,
+  });
+}
+
+type SkillUploadPlan = {
+  artifact_id: string;
+  version: number;
+  upload_id: string;
+  upload_url: string;
+  expires_at: string;
+  upload_mode: "single" | "multipart";
+  part_size: number | null;
+  part_urls: string[];
+};
+
+export async function publishSkillFilesStaged(
+  client: ClawClient,
+  sourceId: string,
+  files: Record<string, string>,
+  name = "skill-package.json",
+) {
+  const sortedFiles = Object.fromEntries(
+    Object.entries(files).sort(([left], [right]) => left.localeCompare(right)),
+  );
+  const archive = new TextEncoder().encode(JSON.stringify({ files: sortedFiles }));
+  const checksum = await sha256Hex(archive);
+  const created = await client.request<SkillUploadPlan>(
+    "POST",
+    "/v1/admin/skill-package-uploads",
+    {
+      json: { name, expected_size: archive.byteLength, expected_checksum: checksum },
+      idempotencyKey: newIdempotencyKey("skill-upload-create"),
+    },
+  );
+  const plan = created.body;
+  const parts: Array<{ part_number: number; etag: string }> = [];
+  if (plan.upload_mode === "multipart") {
+    if (!plan.part_size || plan.part_urls.length === 0) throw new Error("无效的 multipart 上传计划");
+    for (const [index, url] of plan.part_urls.entries()) {
+      const start = index * plan.part_size;
+      const response = await client.uploadObject(
+        url,
+        archive.slice(start, start + plan.part_size),
+        { "Content-Type": "application/vnd.auraclaw.skill-package+json" },
+      );
+      const etag = response.headers.get("ETag");
+      if (!etag) throw new Error("上传分片缺少 ETag");
+      parts.push({ part_number: index + 1, etag });
+    }
+  } else {
+    await client.uploadObject(plan.upload_url, archive, {
+      "Content-Type": "application/vnd.auraclaw.skill-package+json",
+    });
+  }
+  const finalized = await client.request<{
+    artifact_ref: Record<string, unknown>;
+    status: string;
+  }>("POST", `/v1/admin/skill-package-uploads/${segment(plan.artifact_id)}:finalize`, {
+    json: {
+      upload_id: plan.upload_id,
+      version: plan.version,
+      size: archive.byteLength,
+      checksum,
+      parts,
+    },
+    idempotencyKey: newIdempotencyKey("skill-upload-finalize"),
+  });
+  return client.request<SkillCatalogItem>("POST", "/v1/admin/skill-publications", {
+    json: {
+      source_id: sourceId,
+      activate: true,
+      artifact_ref: finalized.body.artifact_ref,
+      expected_digest: `sha256:${checksum}`,
+    },
+    idempotencyKey: newIdempotencyKey("skill-publish-artifact"),
+    expectedRevision: 0,
+  });
+}
+
+export function revokeSkillPublication(
+  client: ClawClient,
+  publication: SkillPublicationRecord,
+  reasonCode: string,
+  revocationAction: "continue" | "pause" | "cancel",
+) {
+  return client.request<{ publication: SkillPublicationRecord }>(
+    "POST",
+    `/v1/admin/skill-publications/${segment(publication.publisher)}/${segment(publication.name)}/versions/${segment(publication.version)}:revoke`,
+    {
+      idempotencyKey: newIdempotencyKey("skill-publication-revoke"),
+      expectedRevision: publication.revision,
+      headers: {
+        ...reasonHeaders(reasonCode),
+        "X-Skill-Revocation-Action": revocationAction,
+      },
+    },
+  );
+}
+
+export function restoreSkillPublication(
+  client: ClawClient,
+  publication: SkillPublicationRecord,
+  reasonCode: string,
+) {
+  return client.request<{ publication: SkillPublicationRecord }>(
+    "POST",
+    `/v1/admin/skill-publications/${segment(publication.publisher)}/${segment(publication.name)}/versions/${segment(publication.version)}:restore`,
+    {
+      idempotencyKey: newIdempotencyKey("skill-publication-restore"),
+      expectedRevision: publication.revision,
+      headers: reasonHeaders(reasonCode),
+    },
+  );
+}
+
+export function purgeSkillPackage(
+  client: ClawClient,
+  skillPackage: SkillPackageRecord,
+  reasonCode: string,
+) {
+  return client.request<{ package: SkillPackageRecord }>(
+    "POST",
+    `/v1/admin/skill-packages/${segment(skillPackage.publisher)}/${segment(skillPackage.name)}/versions/${segment(skillPackage.version)}:purge`,
+    {
+      idempotencyKey: newIdempotencyKey("skill-package-purge"),
+      expectedRevision: skillPackage.retention_revision,
+      headers: reasonHeaders(reasonCode),
+    },
+  );
+}
+
+export type SkillAdmissionFilters = {
+  outcome?: string;
+  stage?: string;
+  content_policy_version?: string;
+  since?: string;
+  cursor?: string;
+  limit?: number;
+};
+
+export function listSkillAdmissions(client: ClawClient, filters: SkillAdmissionFilters = {}) {
+  return client.request<{ admissions: SkillAdmissionRecord[]; next_cursor: string | null }>(
+    "GET",
+    "/v1/admin/skill-admissions",
+    { query: filters },
+  );
+}
+
+export function getSkillAdmissionMetrics(client: ClawClient, windowHours = 24) {
+  return client.request<SkillAdmissionMetrics>("GET", "/v1/admin/skill-admissions/metrics", {
+    query: { window_hours: windowHours },
+  });
+}
+
+async function sha256Hex(content: Uint8Array): Promise<string> {
+  const copy = new Uint8Array(content.byteLength);
+  copy.set(content);
+  const digest = await crypto.subtle.digest("SHA-256", copy.buffer);
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
