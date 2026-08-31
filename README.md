@@ -11,7 +11,7 @@ AuraX 是 AuraClaw 的 **macOS 工作台**：发命令、查投影、订 SSE、�
 - **任务（API 调试）**：`POST /v1/tasks`（异步 202 + `GET /result?wait=true`）或 `POST /v1/tasks/sync`（同步）；以 result 回调为权威结果；含执行轨迹面板。
 - Session 历史：`GET /v1/tasks?kind=chat`，按本机来源标记区分「对话」与「任务」Tab。关窗口 ≠ 取消任务。
 - MCP 管理：登记 / 测试 / 启停 / 对账 / 退役 / 列出 Catalog tools。Secret 只填 `credential_ref`。
-- Skill 治理：聚合 Catalog、Installation 生命周期、MCP Source、Publisher 公钥、已签名包 direct/staged
+- Skill 治理：聚合 Catalog、Installation 生命周期、MCP Source、Publisher 公钥、已签名包 direct/代理 staged
   发布、Publication/Package 处置与 Admission 指标。私钥不进入 AuraX；对话页与任务页只使用后端确认
   `availability=available` 的 Skill。
 - 对话执行轨迹：任务页右侧可折叠面板按 Run 展示模型、MCP/Tool、Skill、Resource、审批与状态节点；历史以 AuraClaw Activity Query 为准。

@@ -285,17 +285,6 @@ export function publishSkillFiles(
   });
 }
 
-type SkillUploadPlan = {
-  artifact_id: string;
-  version: number;
-  upload_id: string;
-  upload_url: string;
-  expires_at: string;
-  upload_mode: "single" | "multipart";
-  part_size: number | null;
-  part_urls: string[];
-};
-
 export async function publishSkillFilesStaged(
   client: ClawClient,
   sourceId: string,
@@ -307,52 +296,26 @@ export async function publishSkillFilesStaged(
   );
   const archive = new TextEncoder().encode(JSON.stringify({ files: sortedFiles }));
   const checksum = await sha256Hex(archive);
-  const created = await client.request<SkillUploadPlan>(
-    "POST",
-    "/v1/admin/skill-package-uploads",
-    {
-      json: { name, expected_size: archive.byteLength, expected_checksum: checksum },
-      idempotencyKey: newIdempotencyKey("skill-upload-create"),
-    },
-  );
-  const plan = created.body;
-  const parts: Array<{ part_number: number; etag: string }> = [];
-  if (plan.upload_mode === "multipart") {
-    if (!plan.part_size || plan.part_urls.length === 0) throw new Error("无效的 multipart 上传计划");
-    for (const [index, url] of plan.part_urls.entries()) {
-      const start = index * plan.part_size;
-      const response = await client.uploadObject(
-        url,
-        archive.slice(start, start + plan.part_size),
-        { "Content-Type": "application/vnd.auraclaw.skill-package+json" },
-      );
-      const etag = response.headers.get("ETag");
-      if (!etag) throw new Error("上传分片缺少 ETag");
-      parts.push({ part_number: index + 1, etag });
-    }
-  } else {
-    await client.uploadObject(plan.upload_url, archive, {
-      "Content-Type": "application/vnd.auraclaw.skill-package+json",
-    });
-  }
-  const finalized = await client.request<{
+  const staged = await client.upload<{
     artifact_ref: Record<string, unknown>;
     status: string;
-  }>("POST", `/v1/admin/skill-package-uploads/${segment(plan.artifact_id)}:finalize`, {
-    json: {
-      upload_id: plan.upload_id,
-      version: plan.version,
-      size: archive.byteLength,
-      checksum,
-      parts,
+  }>(
+    "/v1/admin/skill-package-uploads",
+    archive,
+    {
+      idempotencyKey: newIdempotencyKey("skill-upload-create"),
+      headers: {
+        "Content-Type": "application/vnd.auraclaw.skill-package+json",
+        "X-Upload-Name": name,
+        "X-Content-SHA256": checksum,
+      },
     },
-    idempotencyKey: newIdempotencyKey("skill-upload-finalize"),
-  });
+  );
   return client.request<SkillCatalogItem>("POST", "/v1/admin/skill-publications", {
     json: {
       source_id: sourceId,
       activate: true,
-      artifact_ref: finalized.body.artifact_ref,
+      artifact_ref: staged.body.artifact_ref,
       expected_digest: `sha256:${checksum}`,
     },
     idempotencyKey: newIdempotencyKey("skill-publish-artifact"),

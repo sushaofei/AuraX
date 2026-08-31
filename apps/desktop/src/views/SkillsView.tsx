@@ -162,7 +162,7 @@ function CatalogPanel({ client }: { client: ClawClient }) {
             <div className="stack form-block">
               <label>Source ID<input value={sourceId} onChange={(event) => setSourceId(event.target.value)} placeholder="sks_..." /></label>
               <label>包目录<input type="file" multiple {...({ webkitdirectory: "" } as Record<string, string>)} onChange={(event) => setPackageFiles(Array.from(event.target.files ?? []))} /></label>
-              <p className="mono">私钥不得进入 AuraX。请先离线签名；大包自动使用 staged upload，最终签名、digest 与内容策略由 AuraClaw 校验。</p>
+              <p className="mono">私钥不得进入 AuraX。请先离线签名；大包由 AuraClaw 代理写入对象存储，最终签名、digest 与内容策略也由 AuraClaw 校验。</p>
               <button className="btn amber" type="button" disabled={publish.isPending} onClick={() => publish.mutate()}>发布</button>
             </div>
           </details>

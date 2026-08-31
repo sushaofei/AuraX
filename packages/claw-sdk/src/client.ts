@@ -123,19 +123,47 @@ export class ClawClient {
     return response.body;
   }
 
-  async uploadObject(
-    url: string,
+  async upload<T>(
+    path: string,
     body: BodyInit,
-    headers: Record<string, string> = {},
-  ): Promise<Response> {
-    const response = await this.fetchImpl(url, { method: "PUT", body, headers });
+    options: {
+      idempotencyKey: string;
+      headers?: Record<string, string>;
+    },
+  ): Promise<{ status: number; body: T; headers: Headers }> {
+    const headers: Record<string, string> = {
+      Accept: "application/json",
+      ...identityHeaders(this.identity),
+      "Idempotency-Key": options.idempotencyKey,
+      ...options.headers,
+    };
+    const response = await this.fetchImpl(this.resolveUrl(path), {
+      method: "POST",
+      body,
+      headers,
+    });
+    const raw = await response.text();
+    let parsed: unknown = null;
+    if (raw) {
+      try {
+        parsed = JSON.parse(raw) as unknown;
+      } catch {
+        parsed = { message: raw };
+      }
+    }
     if (!response.ok) {
+      const errorBody = (parsed ?? {}) as {
+        code?: string;
+        message?: string;
+        detail?: string | null;
+      };
       throw new ClawApiError(
         response.status,
-        "artifact_upload_failed",
-        `Artifact upload failed (${response.status})`,
+        errorBody.code ?? "artifact_upload_failed",
+        errorBody.message ?? `Artifact upload failed (${response.status})`,
+        errorBody.detail ?? null,
       );
     }
-    return response;
+    return { status: response.status, body: parsed as T, headers: response.headers };
   }
 }

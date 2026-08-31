@@ -102,26 +102,19 @@ describe("Skill Admin SDK", () => {
 
   it("uploads a canonical staged archive before artifact publication", async () => {
     const calls: string[] = [];
+    let uploadHeaders: Record<string, string> = {};
     const client = new ClawClient({
       baseUrl: "http://claw.example",
-      fetch: (async (input) => {
+      fetch: (async (input, init) => {
         const url = String(input);
         calls.push(url);
         if (url.endsWith("/skill-package-uploads")) {
+          uploadHeaders = init?.headers as Record<string, string>;
+          expect(init?.body).toBeInstanceOf(Uint8Array);
           return jsonResponse({
-            artifact_id: "art_1",
-            version: 1,
-            upload_id: "upl_1",
-            upload_url: "https://objects.example/upload",
-            expires_at: "2026-09-01T00:00:00Z",
-            upload_mode: "single",
-            part_size: null,
-            part_urls: [],
+            artifact_ref: { artifact_id: "art_1", version: 1 },
+            status: "ready",
           }, 201);
-        }
-        if (url === "https://objects.example/upload") return new Response(null, { status: 200 });
-        if (url.includes(":finalize")) {
-          return jsonResponse({ artifact_ref: { artifact_id: "art_1", version: 1 }, status: "ready" });
         }
         return jsonResponse({ publisher: "platform", name: "release.prepare", version: "1.0.0" }, 201);
       }) as typeof fetch,
@@ -132,10 +125,13 @@ describe("Skill Admin SDK", () => {
     });
     expect(calls).toEqual([
       "http://claw.example/v1/admin/skill-package-uploads",
-      "https://objects.example/upload",
-      "http://claw.example/v1/admin/skill-package-uploads/art_1:finalize",
       "http://claw.example/v1/admin/skill-publications",
     ]);
+    expect(uploadHeaders["Content-Type"]).toBe(
+      "application/vnd.auraclaw.skill-package+json",
+    );
+    expect(uploadHeaders["X-Content-SHA256"]).toMatch(/^[0-9a-f]{64}$/);
+    expect(uploadHeaders["X-Tenant-ID"]).toBe("platform");
   });
 
   it("uses the key revision and governance headers when revoking a publisher key", async () => {
