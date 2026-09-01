@@ -177,6 +177,14 @@ export type McpServerRecord = {
     last_test_at?: string | null;
     safe_error_code?: string | null;
   };
+  catalog_publication?: {
+    active_generation?: number | null;
+    status?: string | null;
+    stale?: boolean;
+    last_sync_at?: string | null;
+    last_good_at?: string | null;
+    last_sync_error?: string | null;
+  } | null;
 };
 
 export type McpTool = {

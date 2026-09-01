@@ -11,7 +11,12 @@ export type ClawTraffic = {
 
 export async function mockClaw(
   page: Page,
-  options: { approval?: boolean; skillLifecycle?: boolean } = {},
+  options: {
+    approval?: boolean;
+    failedChat?: boolean;
+    quarantinedCatalog?: boolean;
+    skillLifecycle?: boolean;
+  } = {},
 ): Promise<ClawTraffic> {
   const traffic: ClawTraffic = {
     paths: [],
@@ -151,7 +156,25 @@ export async function mockClaw(
       return;
     }
     if (url.pathname === "/v1/admin/mcp-servers") {
-      await json({ servers: [] });
+      await json({
+        servers: options.quarantinedCatalog
+          ? [
+              {
+                server_id: "chaintowermcp",
+                desired_state: "enabled",
+                latest_revision: 2,
+                latest_config: { title: "ChainTowerMCP" },
+                runtime: { observed_state: "active", safe_error_code: null },
+                catalog_publication: {
+                  active_generation: 624,
+                  status: "quarantined",
+                  stale: true,
+                  last_sync_error: "CapabilitySchemaDriftError",
+                },
+              },
+            ]
+          : [],
+      });
       return;
     }
     if (url.pathname === "/v1/tasks" && route.request().method() === "GET") {
@@ -254,24 +277,26 @@ export async function mockClaw(
     }
     if (url.pathname === "/v1/tasks/ses_e2e") {
       e2eTaskReads += 1;
-      const running = e2eTaskReads < 4;
+      const running = !options.failedChat && e2eTaskReads < 4;
       await json({
         tenant_id: "platform",
         session_id: "ses_e2e",
         root_session_id: "ses_e2e",
         run_id: "run_e2e",
         status: running ? "running" : "ready",
-        run_status: running ? "running" : "completed",
+        run_status: running ? "running" : options.failedChat ? "failed" : "completed",
         goal: "介绍 AuraClaw",
         source: "chat",
         schedule_id: null,
         occurrence_id: null,
         progress: running ? 0.4 : 1,
-        current_stage: running ? "model" : "done",
+        current_stage: running ? "model" : options.failedChat ? "failed" : "done",
         result_summary: running ? null : "AuraClaw 是 Managed Agent 控制面。",
         result_ref: null,
         artifact_refs: [],
-        error: null,
+        error: options.failedChat
+          ? { code: "not_found", message: "Skill Tool dependency is unavailable" }
+          : null,
         projection_version: 2,
         projected_at: "2026-08-25T04:13:04Z",
       });

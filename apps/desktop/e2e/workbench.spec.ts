@@ -61,6 +61,17 @@ test("critical views load without hitting internal APIs or AuraMCP", async ({ pa
   expect(traffic.paths.some((path) => path.includes("/internal/"))).toBe(false);
 });
 
+test("MCP view exposes quarantined Catalog instead of only aggregate runtime state", async ({ page }) => {
+  await mockClaw(page, { quarantinedCatalog: true });
+  await page.goto("/");
+  await page.getByRole("button", { name: "MCP" }).click();
+
+  await expect(page.getByText("Catalog quarantined")).toBeVisible();
+  await expect(page.getByText("generation 624 · stale")).toBeVisible();
+  await expect(page.getByText("CapabilitySchemaDriftError")).toBeVisible();
+  await expect(page.getByRole("button", { name: "同步目录" })).toBeVisible();
+});
+
 test("skill uninstall refreshes the selected revision before force escalation", async ({ page }) => {
   const traffic = await mockClaw(page, { skillLifecycle: true });
   const uninstallModes = ["graceful", "force"];
@@ -118,6 +129,19 @@ test("chat view renders streaming delta from SSE", async ({ page }) => {
   await page.getByPlaceholder("要 AuraClaw 做什么？").fill("介绍 AuraClaw");
   await page.getByRole("button", { name: "开始" }).click();
   await expect(page.getByText("流式")).toBeVisible();
+});
+
+test("failed chat run shows the current error separately from transcript history", async ({ page }) => {
+  await mockClaw(page, { failedChat: true });
+  await page.goto("/");
+  await page.getByPlaceholder("要 AuraClaw 做什么？").fill("使用价格洞察 Skill");
+  await page.getByRole("button", { name: "开始" }).click();
+
+  const failure = page.getByRole("alert");
+  await expect(failure.getByText("本轮执行失败")).toBeVisible();
+  await expect(failure.getByText("not_found")).toBeVisible();
+  await expect(failure.getByText("Skill Tool dependency is unavailable")).toBeVisible();
+  await expect(failure.getByText(/transcript 保留会话历史/)).toBeVisible();
 });
 
 test("task view async trigger shows authoritative result", async ({ page }) => {

@@ -26,7 +26,7 @@ const MCP_ACTION_LABEL: Record<
   test: "探测",
   enable: "启用",
   disable: "停用",
-  reconcile: "对账",
+  reconcile: "同步目录",
 };
 
 const MCP_AUTH_LABEL: Record<McpAuthStrategy, string> = {
@@ -331,6 +331,27 @@ export function McpView({ client }: { client: ClawClient }) {
             {server.runtime?.safe_error_code ? (
               <p className="error">{server.runtime.safe_error_code}</p>
             ) : null}
+            {server.catalog_publication ? (
+              <div className="row">
+                <span
+                  className={`pill ${
+                    server.catalog_publication.stale ||
+                    server.catalog_publication.status === "quarantined"
+                      ? "off"
+                      : "ok"
+                  }`}
+                >
+                  Catalog {server.catalog_publication.status ?? "unknown"}
+                </span>
+                <span className="mono">
+                  generation {server.catalog_publication.active_generation ?? "—"}
+                  {server.catalog_publication.stale ? " · stale" : ""}
+                </span>
+              </div>
+            ) : null}
+            {server.catalog_publication?.last_sync_error ? (
+              <p className="error">{server.catalog_publication.last_sync_error}</p>
+            ) : null}
             <McpServerActions
               client={client}
               server={server}
@@ -482,7 +503,7 @@ function McpServerActions({
           {tools.isPending ? <p className="mono">正在读取目录…</p> : null}
           {tools.error ? <p className="error">{errorText(tools.error)}</p> : null}
           {tools.data && tools.data.length === 0 ? (
-            <p className="mono">目录为空。启用后点对账，才会把 tools 写入 Catalog。</p>
+            <p className="mono">目录为空。启用后点同步目录，才会把 tools 写入 Catalog。</p>
           ) : null}
           {tools.data && tools.data.length > 0 ? (
             <ul className="tool-list">

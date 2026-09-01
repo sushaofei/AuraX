@@ -30,6 +30,19 @@ import { errorText, isNotFound } from "../lib/errors";
 
 const TERMINAL_RUN = new Set(["completed", "failed", "cancelled"]);
 
+function failureField(
+  error: Record<string, unknown> | null | undefined,
+  ...names: string[]
+): string | null {
+  for (const name of names) {
+    const value = error?.[name];
+    if (typeof value === "string" && value.trim()) {
+      return value.trim();
+    }
+  }
+  return null;
+}
+
 export function ChatView({
   client,
   sessionId,
@@ -84,6 +97,13 @@ export function ChatView({
   const pendingOptimistic = optimistic.filter((text) => !confirmedUser.has(text));
   const runStatus = task.data?.run_status;
   const sessionStatus = task.data?.status;
+  const runErrorCode = failureField(task.data?.error, "code", "error_code");
+  const runErrorSummary = failureField(
+    task.data?.error,
+    "message",
+    "summary",
+    "detail",
+  );
   const streamIdle =
     typeof runStatus === "string" &&
     TERMINAL_RUN.has(runStatus) &&
@@ -351,6 +371,14 @@ export function ChatView({
           {sessionId} · {task.data?.status ?? "…"} / {task.data?.run_status ?? "…"}
           {streamNote ? ` · ${streamNote}` : ""}
         </p>
+      ) : null}
+      {runStatus === "failed" ? (
+        <div className="card run-failure" role="alert">
+          <strong>本轮执行失败</strong>
+          {runErrorCode ? <p className="mono">{runErrorCode}</p> : null}
+          <p className="error">{runErrorSummary ?? "执行未完成，请稍后重试或新开一轮。"}</p>
+          <p className="mono">下方 transcript 保留会话历史，不代表本轮执行成功。</p>
+        </div>
       ) : null}
       {!sessionId ? (
         <p className="empty">还没有 Session。勾选要用的 Skill，输入目标后开始对话。</p>
