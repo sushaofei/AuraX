@@ -256,7 +256,13 @@ function CatalogPanel({ client }: { client: ClawClient }) {
                 </div>
               </div>
             ))}
-            {govern.error ? <p className="error">{errorText(govern.error)}</p> : null}
+            {govern.error ? (
+              <p className="error">
+                {errorText(govern.error, {
+                  redactedForbiddenMessage: "Skill 治理操作被后端拒绝；请检查生命周期状态或服务认证日志。",
+                })}
+              </p>
+            ) : null}
             {detail.data?.skill_markdown ? <MarkdownBody text={detail.data.skill_markdown} /> : <p className="empty">没有 SKILL.md</p>}
           </div>
         ) : null}
