@@ -61,6 +61,27 @@ test("critical views load without hitting internal APIs or AuraMCP", async ({ pa
   expect(traffic.paths.some((path) => path.includes("/internal/"))).toBe(false);
 });
 
+test("skill uninstall refreshes the selected revision before force escalation", async ({ page }) => {
+  const traffic = await mockClaw(page, { skillLifecycle: true });
+  page.on("dialog", async (dialog) => {
+    await dialog.accept(dialog.type() === "prompt" ? "e2e_uninstall" : undefined);
+  });
+
+  await page.goto("/");
+  await page.getByRole("button", { name: "Skill" }).click();
+  await page.getByRole("button", { name: /acme\/revision-demo/ }).click();
+  await expect(page.getByText("disabled / rev 2")).toBeVisible();
+
+  await page.getByRole("button", { name: "卸载（draining）" }).click();
+  await expect(page.getByText("draining / rev 3")).toBeVisible();
+  await expect(page.getByRole("button", { name: "卸载（draining）" })).toHaveCount(0);
+
+  await page.getByRole("button", { name: "强制卸载" }).click();
+  await expect(page.getByText("uninstalled / rev 4")).toBeVisible();
+  await expect(page.getByRole("button", { name: "重新安装" })).toBeVisible();
+  expect(traffic.skillExpectedRevisions).toEqual(["2", "3"]);
+});
+
 test("creating a chat session does not cancel when leaving the view", async ({ page }) => {
   const traffic = await mockClaw(page);
   await page.goto("/");

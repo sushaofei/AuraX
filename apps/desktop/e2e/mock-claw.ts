@@ -5,21 +5,57 @@ export type ClawTraffic = {
   cancels: number;
   approvals: number;
   approvalExpectedVersions: string[];
+  skillExpectedRevisions: string[];
 };
 
 export async function mockClaw(
   page: Page,
-  options: { approval?: boolean } = {},
+  options: { approval?: boolean; skillLifecycle?: boolean } = {},
 ): Promise<ClawTraffic> {
   const traffic: ClawTraffic = {
     paths: [],
     cancels: 0,
     approvals: 0,
     approvalExpectedVersions: [],
+    skillExpectedRevisions: [],
   };
   let taskReads = 0;
   let e2eTaskReads = 0;
   let e2eTranscriptReads = 0;
+  let skillStatus = "disabled";
+  let skillRevision = 2;
+
+  const installation = () => ({
+    publisher: "acme",
+    name: "revision-demo",
+    version_constraint: "=1.0.0",
+    pinned_package_digest: "sha256:e2e",
+    status: skillStatus,
+    source_id: null,
+    auto_upgrade: false,
+    revision: skillRevision,
+    reason_code: null,
+    uninstall_action: skillStatus === "draining" ? "continue" : skillStatus === "uninstalled" ? "cancel" : null,
+    uninstall_policy_version: skillStatus === "disabled" ? null : "skill-uninstall-v1",
+    uninstall_policy_decision_id: skillStatus === "disabled" ? null : "e2e-uninstall",
+    updated_by: "local-user",
+    updated_at: "2026-09-01T00:00:00Z",
+  });
+  const catalogSkill = () => ({
+    publisher: "acme",
+    name: "revision-demo",
+    version: "1.0.0",
+    latest_version: "1.0.0",
+    status: "active",
+    description: "Revision lifecycle regression fixture",
+    risk_level: "low",
+    package_digest: "sha256:e2e",
+    required_tools: [],
+    required_resources: [],
+    required_skills: [],
+    installation: installation(),
+    availability: `installation_${skillStatus}`,
+  });
 
   await page.route("**/v1/**", async (route) => {
     const url = new URL(route.request().url());
@@ -51,7 +87,32 @@ export async function mockClaw(
     }
 
     if (url.pathname === "/v1/admin/skills") {
-      await json({ skills: [] });
+      await json({ skills: options.skillLifecycle ? [catalogSkill()] : [] });
+      return;
+    }
+    if (options.skillLifecycle && url.pathname === "/v1/admin/skills/acme/revision-demo") {
+      await json({ ...catalogSkill(), skill_markdown: "# Revision demo" });
+      return;
+    }
+    if (options.skillLifecycle && url.pathname === "/v1/admin/skills/acme/revision-demo/management") {
+      await json({
+        publisher: "acme",
+        name: "revision-demo",
+        installation: installation(),
+        versions: [],
+      });
+      return;
+    }
+    if (
+      options.skillLifecycle &&
+      url.pathname === "/v1/admin/skills/acme/revision-demo:uninstall"
+    ) {
+      traffic.skillExpectedRevisions.push(
+        route.request().headers()["x-expected-revision"] ?? "",
+      );
+      skillStatus = url.searchParams.get("force") === "true" ? "uninstalled" : "draining";
+      skillRevision += 1;
+      await json({ installation: installation() }, 202);
       return;
     }
     if (url.pathname === "/v1/admin/mcp-servers") {

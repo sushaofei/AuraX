@@ -78,13 +78,24 @@ export function SkillsView({ client }: { client: ClawClient }) {
 function CatalogPanel({ client }: { client: ClawClient }) {
   const queryClient = useQueryClient();
   const [search, setSearch] = useState("");
-  const [selected, setSelected] = useState<SkillCatalogItem | null>(null);
+  const [selectedIdentity, setSelectedIdentity] = useState<Pick<SkillCatalogItem, "publisher" | "name"> | null>(null);
   const [sourceId, setSourceId] = useState("");
   const [packageFiles, setPackageFiles] = useState<File[]>([]);
   const catalog = useQuery({
     queryKey: ["skill-catalog", client.baseUrl, search],
     queryFn: async () => (await listSkillCatalog(client, { q: search, limit: 200 })).body.items ?? [],
   });
+  const selected = useMemo(
+    () =>
+      selectedIdentity
+        ? (catalog.data ?? []).find(
+            (skill) =>
+              skill.publisher === selectedIdentity.publisher &&
+              skill.name === selectedIdentity.name,
+          ) ?? null
+        : null,
+    [catalog.data, selectedIdentity],
+  );
   const detail = useQuery({
     queryKey: ["skill-detail", client.baseUrl, selected?.publisher, selected?.name],
     queryFn: async () => (await getSkill(client, selected!.publisher, selected!.name)).body,
@@ -118,7 +129,19 @@ function CatalogPanel({ client }: { client: ClawClient }) {
         options,
       );
     },
-    onSuccess: refresh,
+    onSuccess: (response) => {
+      queryClient.setQueriesData<SkillCatalogItem[]>(
+        { queryKey: ["skill-catalog"] },
+        (items) =>
+          items?.map((item) =>
+            item.publisher === response.body.installation.publisher &&
+            item.name === response.body.installation.name
+              ? { ...item, installation: response.body.installation }
+              : item,
+          ),
+      );
+      refresh();
+    },
   });
   const govern = useMutation({
     mutationFn: async (input: { kind: "revoke" | "restore" | "purge"; index: number }) => {
@@ -181,7 +204,7 @@ function CatalogPanel({ client }: { client: ClawClient }) {
         </div>
         <div className="list skill-list">
           {(catalog.data ?? []).map((skill) => (
-            <button className="item" type="button" key={`${skill.publisher}/${skill.name}`} onClick={() => setSelected(skill)}>
+            <button className="item" type="button" key={`${skill.publisher}/${skill.name}`} onClick={() => setSelectedIdentity({ publisher: skill.publisher, name: skill.name })}>
               <span><strong>{skill.publisher}/{skill.name}</strong><span className="mono">@{skill.latest_version ?? skill.version} · {skill.risk_level}</span></span>
               <span className={`pill ${skill.availability === "available" ? "ok" : "off"}`}>{skill.availability ?? skill.status}</span>
             </button>
@@ -201,7 +224,7 @@ function CatalogPanel({ client }: { client: ClawClient }) {
               {selected.installation?.status === "disabled" ? <button className="btn amber" type="button" onClick={() => lifecycle.mutate({ skill: selected, action: "enable" })}>启用</button> : null}
               {selected.installation?.status === "uninstalled" ? <button className="btn amber" type="button" onClick={() => lifecycle.mutate({ skill: selected, action: "install" })}>重新安装</button> : null}
               {selected.installation && !["draining", "uninstalled"].includes(selected.installation.status) ? <button className="btn danger ghost" type="button" onClick={() => lifecycle.mutate({ skill: selected, action: "uninstall" })}>卸载（draining）</button> : null}
-              {selected.installation && !["draining", "uninstalled"].includes(selected.installation.status) ? <button className="btn danger" type="button" onClick={() => window.confirm("Force 会取消使用此 Skill 的运行，确认继续？") && lifecycle.mutate({ skill: selected, action: "uninstall", force: true })}>强制卸载</button> : null}
+              {selected.installation && selected.installation.status !== "uninstalled" ? <button className="btn danger" type="button" onClick={() => window.confirm("Force 会取消使用此 Skill 的运行，确认继续？") && lifecycle.mutate({ skill: selected, action: "uninstall", force: true })}>强制卸载</button> : null}
             </div>
             {lifecycle.error ? <p className="error">{errorText(lifecycle.error)}</p> : null}
             <dl className="detail-list"><dt>Digest</dt><dd className="mono">{selected.package_digest}</dd><dt>Installation</dt><dd>{selected.installation?.status ?? "not installed"} / rev {selected.installation?.revision ?? "-"}</dd></dl>
