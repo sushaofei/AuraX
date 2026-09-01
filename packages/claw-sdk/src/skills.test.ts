@@ -4,6 +4,7 @@ import {
   changeSkillInstallation,
   listSkillAdmissions,
   listSkillCatalog,
+  normalizeSkillPackageFiles,
   publishSkillFilesStaged,
   revokeSkillPublisherKey,
   saveSkillSource,
@@ -18,6 +19,62 @@ function jsonResponse(body: unknown, status = 200): Response {
 }
 
 describe("Skill Admin SDK", () => {
+  it("normalizes a selected Skill directory to package-root paths", () => {
+    expect(
+      normalizeSkillPackageFiles([
+        ["price-insight-deviation/manifest.json", "manifest"],
+        ["price-insight-deviation/SKILL.md", "skill"],
+        ["price-insight-deviation/references/tools.md", "tools"],
+      ]),
+    ).toEqual({
+      "manifest.json": "manifest",
+      "SKILL.md": "skill",
+      "references/tools.md": "tools",
+    });
+  });
+
+  it("preserves package-root paths supplied without a directory prefix", () => {
+    expect(
+      normalizeSkillPackageFiles([
+        ["manifest.json", "manifest"],
+        ["SKILL.md", "skill"],
+        ["references/tools.md", "tools"],
+      ]),
+    ).toEqual({
+      "manifest.json": "manifest",
+      "SKILL.md": "skill",
+      "references/tools.md": "tools",
+    });
+  });
+
+  it.each([
+    {
+      name: "path traversal",
+      entries: [
+        ["skill/manifest.json", "manifest"],
+        ["skill/SKILL.md", "skill"],
+        ["skill/../secret", "secret"],
+      ] as const,
+      message: "Skill 包包含非法路径",
+    },
+    {
+      name: "duplicates after normalization",
+      entries: [
+        ["skill/manifest.json", "first"],
+        ["skill/manifest.json", "second"],
+        ["skill/SKILL.md", "skill"],
+      ] as const,
+      message: "Skill 包包含重复路径：manifest.json",
+    },
+    {
+      name: "missing root manifest",
+      entries: [["skill/SKILL.md", "skill"]] as const,
+      message: "Skill 包根目录缺少 manifest.json",
+    },
+  ])("rejects $name", ({ entries, message }) => {
+    expect(() => normalizeSkillPackageFiles(entries)).toThrow(message);
+  });
+
   it("prefers the aggregate catalog items while preserving legacy responses", async () => {
     const client = new ClawClient({
       baseUrl: "http://claw.example",

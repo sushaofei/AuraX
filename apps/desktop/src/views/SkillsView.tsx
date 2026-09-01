@@ -9,6 +9,7 @@ import {
   listSkillCatalog,
   listSkillPublishers,
   listSkillSources,
+  normalizeSkillPackageFiles,
   publishSkillFiles,
   publishSkillFilesStaged,
   purgeSkillPackage,
@@ -139,8 +140,11 @@ function CatalogPanel({ client }: { client: ClawClient }) {
   const publish = useMutation({
     mutationFn: async () => {
       if (!sourceId.trim() || packageFiles.length === 0) throw new Error("请选择来源和已签名包文件");
+      const selectedFiles = normalizeSkillPackageFiles(
+        packageFiles.map((file) => [file.webkitRelativePath || file.name, file] as const),
+      );
       const files: Record<string, string> = {};
-      for (const file of packageFiles) files[file.webkitRelativePath || file.name] = await fileBase64(file);
+      for (const [path, file] of Object.entries(selectedFiles)) files[path] = await fileBase64(file);
       const encodedBytes = Object.values(files).reduce((total, value) => total + value.length, 0);
       return encodedBytes > 8 * 1024 * 1024
         ? publishSkillFilesStaged(client, sourceId.trim(), files)

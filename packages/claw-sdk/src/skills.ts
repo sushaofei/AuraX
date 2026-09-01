@@ -285,6 +285,47 @@ export function publishSkillFiles(
   });
 }
 
+export function normalizeSkillPackageFiles<T>(
+  entries: ReadonlyArray<readonly [path: string, value: T]>,
+): Record<string, T> {
+  if (entries.length === 0) throw new Error("Skill 包目录为空");
+
+  const parsed = entries.map(([path, value]) => {
+    const normalized = path.replaceAll("\\", "/");
+    if (
+      normalized.length === 0 ||
+      normalized.startsWith("/") ||
+      /^[A-Za-z]:\//.test(normalized)
+    ) {
+      throw new Error(`Skill 包包含非法路径：${path}`);
+    }
+    const segments = normalized.split("/");
+    if (segments.some((segment) => segment === "" || segment === "." || segment === "..")) {
+      throw new Error(`Skill 包包含非法路径：${path}`);
+    }
+    return { segments, value };
+  });
+
+  const firstRoot = parsed[0]!.segments[0]!;
+  const hasDirectoryPrefix = parsed.every(
+    ({ segments }) => segments.length > 1 && segments[0] === firstRoot,
+  );
+  const files: Record<string, T> = {};
+  for (const { segments, value } of parsed) {
+    const packagePath = (hasDirectoryPrefix ? segments.slice(1) : segments).join("/");
+    if (Object.hasOwn(files, packagePath)) {
+      throw new Error(`Skill 包包含重复路径：${packagePath}`);
+    }
+    files[packagePath] = value;
+  }
+  for (const required of ["manifest.json", "SKILL.md"]) {
+    if (!Object.hasOwn(files, required)) {
+      throw new Error(`Skill 包根目录缺少 ${required}`);
+    }
+  }
+  return files;
+}
+
 export async function publishSkillFilesStaged(
   client: ClawClient,
   sourceId: string,
