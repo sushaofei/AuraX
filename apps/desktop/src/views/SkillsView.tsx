@@ -143,6 +143,25 @@ function CatalogPanel({ client }: { client: ClawClient }) {
       refresh();
     },
   });
+  const requestUninstall = (skill: SkillCatalogItem) => {
+    const draining = skill.installation?.status === "draining";
+    const mode = window.prompt(
+      draining
+        ? "当前 Skill 正在等待现有任务完成。输入 force 可取消现有任务并完成卸载。"
+        : "卸载方式：输入 graceful 等待现有任务完成，或输入 force 取消现有任务。",
+      draining ? "force" : "graceful",
+    )?.trim().toLowerCase();
+    if (!mode) return;
+    if (mode !== "graceful" && mode !== "force") {
+      window.alert("卸载方式必须是 graceful 或 force");
+      return;
+    }
+    if (draining && mode !== "force") {
+      window.alert("当前正在 draining；如需立即完成卸载，请选择 force");
+      return;
+    }
+    lifecycle.mutate({ skill, action: "uninstall", force: mode === "force" });
+  };
   const govern = useMutation({
     mutationFn: async (input: { kind: "revoke" | "restore" | "purge"; index: number }) => {
       const version = management.data!.versions[input.index]!;
@@ -223,8 +242,7 @@ function CatalogPanel({ client }: { client: ClawClient }) {
               {selected.installation?.status === "active" ? <button className="btn ghost" type="button" onClick={() => lifecycle.mutate({ skill: selected, action: "disable" })}>停用</button> : null}
               {selected.installation?.status === "disabled" ? <button className="btn amber" type="button" onClick={() => lifecycle.mutate({ skill: selected, action: "enable" })}>启用</button> : null}
               {selected.installation?.status === "uninstalled" ? <button className="btn amber" type="button" onClick={() => lifecycle.mutate({ skill: selected, action: "install" })}>重新安装</button> : null}
-              {selected.installation && !["draining", "uninstalled"].includes(selected.installation.status) ? <button className="btn danger ghost" type="button" onClick={() => lifecycle.mutate({ skill: selected, action: "uninstall" })}>卸载（draining）</button> : null}
-              {selected.installation && selected.installation.status !== "uninstalled" ? <button className="btn danger" type="button" onClick={() => window.confirm("Force 会取消使用此 Skill 的运行，确认继续？") && lifecycle.mutate({ skill: selected, action: "uninstall", force: true })}>强制卸载</button> : null}
+              {selected.installation && selected.installation.status !== "uninstalled" ? <button className="btn danger" type="button" onClick={() => requestUninstall(selected)}>卸载</button> : null}
             </div>
             {lifecycle.error ? <p className="error">{errorText(lifecycle.error)}</p> : null}
             <dl className="detail-list"><dt>Digest</dt><dd className="mono">{selected.package_digest}</dd><dt>Installation</dt><dd>{selected.installation?.status ?? "not installed"} / rev {selected.installation?.revision ?? "-"}</dd></dl>
@@ -234,7 +252,7 @@ function CatalogPanel({ client }: { client: ClawClient }) {
                 <div className="row">
                   {version.publication.status === "retired" ? <button className="btn ghost" type="button" onClick={() => govern.mutate({ kind: "restore", index })}>恢复</button> : null}
                   {version.publication.status !== "revoked" ? <button className="btn danger ghost" type="button" onClick={() => govern.mutate({ kind: "revoke", index })}>撤销</button> : null}
-                  {version.publication.status === "revoked" && version.package?.retention_status !== "purged" ? <button className="btn danger" type="button" onClick={() => govern.mutate({ kind: "purge", index })}>Purge</button> : null}
+                  {version.publication.status === "revoked" && selected.installation?.status === "uninstalled" && version.package?.retention_status !== "purged" && !version.package?.legal_hold ? <button className="btn danger" type="button" onClick={() => govern.mutate({ kind: "purge", index })}>Purge</button> : null}
                 </div>
               </div>
             ))}

@@ -63,23 +63,37 @@ test("critical views load without hitting internal APIs or AuraMCP", async ({ pa
 
 test("skill uninstall refreshes the selected revision before force escalation", async ({ page }) => {
   const traffic = await mockClaw(page, { skillLifecycle: true });
+  const uninstallModes = ["graceful", "force"];
   page.on("dialog", async (dialog) => {
-    await dialog.accept(dialog.type() === "prompt" ? "e2e_uninstall" : undefined);
+    if (dialog.type() !== "prompt") {
+      await dialog.accept();
+      return;
+    }
+    await dialog.accept(
+      dialog.message().includes("卸载方式") || dialog.message().includes("正在等待")
+        ? uninstallModes.shift()
+        : "e2e_uninstall",
+    );
   });
 
   await page.goto("/");
   await page.getByRole("button", { name: "Skill" }).click();
   await page.getByRole("button", { name: /acme\/revision-demo/ }).click();
   await expect(page.getByText("disabled / rev 2")).toBeVisible();
+  await expect(page.getByRole("button", { name: "卸载", exact: true })).toHaveCount(1);
+  await expect(page.getByRole("button", { name: "Purge" })).toHaveCount(0);
 
-  await page.getByRole("button", { name: "卸载（draining）" }).click();
+  await page.getByRole("button", { name: "卸载", exact: true }).click();
   await expect(page.getByText("draining / rev 3")).toBeVisible();
-  await expect(page.getByRole("button", { name: "卸载（draining）" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "卸载", exact: true })).toHaveCount(1);
+  await expect(page.getByRole("button", { name: "Purge" })).toHaveCount(0);
 
-  await page.getByRole("button", { name: "强制卸载" }).click();
+  await page.getByRole("button", { name: "卸载", exact: true }).click();
   await expect(page.getByText("uninstalled / rev 4")).toBeVisible();
   await expect(page.getByRole("button", { name: "重新安装" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Purge" })).toBeVisible();
   expect(traffic.skillExpectedRevisions).toEqual(["2", "3"]);
+  expect(traffic.skillForces).toEqual([false, true]);
 });
 
 test("creating a chat session does not cancel when leaving the view", async ({ page }) => {

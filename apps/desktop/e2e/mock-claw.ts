@@ -6,6 +6,7 @@ export type ClawTraffic = {
   approvals: number;
   approvalExpectedVersions: string[];
   skillExpectedRevisions: string[];
+  skillForces: boolean[];
 };
 
 export async function mockClaw(
@@ -18,6 +19,7 @@ export async function mockClaw(
     approvals: 0,
     approvalExpectedVersions: [],
     skillExpectedRevisions: [],
+    skillForces: [],
   };
   let taskReads = 0;
   let e2eTaskReads = 0;
@@ -99,7 +101,38 @@ export async function mockClaw(
         publisher: "acme",
         name: "revision-demo",
         installation: installation(),
-        versions: [],
+        versions: [
+          {
+            publication: {
+              publisher: "acme",
+              name: "revision-demo",
+              version: "1.0.0",
+              package_digest: "sha256:e2e",
+              status: "revoked",
+              source_id: null,
+              revision: 2,
+              reason_code: "e2e_revoke",
+              revocation_action: "cancel",
+              revocation_policy_version: "skill-revocation-v1",
+              revocation_policy_decision_id: "e2e-revoke",
+              updated_by: "local-user",
+              updated_at: "2026-09-01T00:00:00Z",
+            },
+            package: {
+              publisher: "acme",
+              name: "revision-demo",
+              version: "1.0.0",
+              package_digest: "sha256:e2e",
+              retention_status: "retained",
+              retention_until: "2099-01-01T00:00:00Z",
+              legal_hold: false,
+              retention_revision: 1,
+              retention_updated_by: "local-user",
+              retention_updated_at: "2026-09-01T00:00:00Z",
+              purged_at: null,
+            },
+          },
+        ],
       });
       return;
     }
@@ -110,7 +143,9 @@ export async function mockClaw(
       traffic.skillExpectedRevisions.push(
         route.request().headers()["x-expected-revision"] ?? "",
       );
-      skillStatus = url.searchParams.get("force") === "true" ? "uninstalled" : "draining";
+      const force = url.searchParams.get("force") === "true";
+      traffic.skillForces.push(force);
+      skillStatus = force ? "uninstalled" : "draining";
       skillRevision += 1;
       await json({ installation: installation() }, 202);
       return;
