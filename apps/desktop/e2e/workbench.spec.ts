@@ -94,6 +94,11 @@ test("skill uninstall refreshes the selected revision before force escalation", 
   await expect(page.getByRole("button", { name: "Purge" })).toBeVisible();
   expect(traffic.skillExpectedRevisions).toEqual(["2", "3"]);
   expect(traffic.skillForces).toEqual([false, true]);
+
+  await page.getByRole("button", { name: "对话" }).click();
+  const chat = page.locator(".view-panel:not(.view-hidden)");
+  await expect(chat.getByRole("button", { name: /revision-demo/ })).toHaveCount(0);
+  await expect(chat.getByText("当前没有可用于对话的 Skill")).toBeVisible();
 });
 
 test("creating a chat session does not cancel when leaving the view", async ({ page }) => {

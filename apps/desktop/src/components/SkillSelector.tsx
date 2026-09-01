@@ -26,6 +26,10 @@ export function SkillSelector({ client, locked }: { client: ClawClient; locked: 
       void queryClient.invalidateQueries({ queryKey: ["skills"] });
     },
   });
+  const selectableSkills = (skills.data ?? []).filter(
+    (skill) =>
+      skill.installation?.status === "active" || skill.installation?.status === "disabled",
+  );
 
   return (
     <div className="skill-picker">
@@ -35,7 +39,7 @@ export function SkillSelector({ client, locked }: { client: ClawClient; locked: 
       </p>
       {skills.error ? <p className="error">{errorText(skills.error)}</p> : null}
       <div className="chip-row">
-        {(skills.data ?? []).map((skill) => {
+        {selectableSkills.map((skill) => {
           const pressed = skill.availability === "available";
           return (
             <button
@@ -53,8 +57,8 @@ export function SkillSelector({ client, locked }: { client: ClawClient; locked: 
           );
         })}
       </div>
-      {skills.data?.length === 0 ? (
-        <p className="empty">租户还没有 Skill。到 Skill 页查看目录。</p>
+      {selectableSkills.length === 0 ? (
+        <p className="empty">当前没有可用于对话的 Skill。到 Skill 页查看目录。</p>
       ) : null}
       {toggle.error ? <p className="error">{errorText(toggle.error)}</p> : null}
     </div>
