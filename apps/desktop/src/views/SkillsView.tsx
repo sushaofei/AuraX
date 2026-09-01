@@ -170,7 +170,14 @@ function CatalogPanel({ client }: { client: ClawClient }) {
               <button className="btn amber" type="button" disabled={publish.isPending} onClick={() => publish.mutate()}>发布</button>
             </div>
           </details>
-          {publish.error ? <p className="error">{errorText(publish.error)}</p> : null}
+          {publish.error ? (
+            <p className="error">
+              {errorText(publish.error, {
+                redactedForbiddenMessage:
+                  "Skill 发布被策略拒绝；请在 Admissions 查看拒绝阶段和错误码。",
+              })}
+            </p>
+          ) : null}
         </div>
         <div className="list skill-list">
           {(catalog.data ?? []).map((skill) => (

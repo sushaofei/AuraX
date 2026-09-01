@@ -12,6 +12,25 @@ export class ClawApiError extends Error {
   }
 }
 
+export type ClawApiErrorFormatOptions = {
+  redactedForbiddenMessage?: string;
+};
+
+export function formatClawApiError(
+  error: ClawApiError,
+  options: ClawApiErrorFormatOptions = {},
+): string {
+  if (
+    error.status === 403 &&
+    error.code === "http_error" &&
+    options.redactedForbiddenMessage
+  ) {
+    return `HTTP 403 · ${options.redactedForbiddenMessage}`;
+  }
+  const detail = error.detail ? ` · ${error.detail}` : "";
+  return `HTTP ${error.status} · ${error.code}: ${error.message}${detail}`;
+}
+
 function randomUuid(): string {
   if (typeof crypto.randomUUID === "function") {
     return crypto.randomUUID();
