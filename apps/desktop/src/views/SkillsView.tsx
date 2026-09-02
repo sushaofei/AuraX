@@ -4,45 +4,28 @@ import {
   getSkill,
   getSkillAdmissionMetrics,
   getSkillManagement,
-  getSkillSourceSyncState,
   listSkillAdmissions,
   listSkillCatalog,
   listSkillPublishers,
-  listSkillSources,
   normalizeSkillPackageFiles,
   publishSkillFiles,
   publishSkillFilesStaged,
   purgeSkillPackage,
   registerSkillPublisher,
   restoreSkillPublication,
-  retireSkillSource,
   revokeSkillPublisherKey,
   revokeSkillPublication,
   rotateSkillPublisherKey,
-  saveSkillSource,
-  syncSkillSource,
   type ClawClient,
   type SkillCatalogItem,
   type SkillPublisherView,
-  type SkillSourceInput,
-  type SkillSourceRecord,
 } from "@aurax/claw-sdk";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 import { MarkdownBody } from "../components/MarkdownBody";
 import { errorText } from "../lib/errors";
 
-type SkillTab = "catalog" | "sources" | "publishers" | "admissions";
-
-const EMPTY_SOURCE: SkillSourceInput = {
-  source_id: "",
-  kind: "mcp",
-  desired_state: "disabled",
-  publisher_allowlist: [],
-  credential_ref: null,
-  config_metadata: {},
-  priority: 0,
-};
+type SkillTab = "catalog" | "publishers" | "admissions";
 
 export function SkillsView({ client }: { client: ClawClient }) {
   const [tab, setTab] = useState<SkillTab>("catalog");
@@ -51,10 +34,10 @@ export function SkillsView({ client }: { client: ClawClient }) {
       <p className="kicker">Governed capability</p>
       <h1>Skill</h1>
       <p className="lede">
-        管理 Catalog、租户安装、MCP 来源、Publisher 公钥、签名包发布与 Admission 审计。AuraX 不执行或签名 Skill。
+        管理 Catalog、租户安装、Publisher 公钥、签名包发布与 Admission 审计。AuraX 不执行或签名 Skill。
       </p>
       <div className="skill-admin-tabs" role="tablist" aria-label="Skill 管理视图">
-        {(["catalog", "sources", "publishers", "admissions"] as const).map((item) => (
+        {(["catalog", "publishers", "admissions"] as const).map((item) => (
           <button
             key={item}
             type="button"
@@ -63,12 +46,11 @@ export function SkillsView({ client }: { client: ClawClient }) {
             className={`btn ${tab === item ? "amber" : "ghost"}`}
             onClick={() => setTab(item)}
           >
-            {item === "catalog" ? "Catalog" : item === "sources" ? "Sources" : item === "publishers" ? "Publishers" : "Admissions"}
+            {item === "catalog" ? "Catalog" : item === "publishers" ? "Publishers" : "Admissions"}
           </button>
         ))}
       </div>
       {tab === "catalog" ? <CatalogPanel client={client} /> : null}
-      {tab === "sources" ? <SourcesPanel client={client} /> : null}
       {tab === "publishers" ? <PublishersPanel client={client} /> : null}
       {tab === "admissions" ? <AdmissionsPanel client={client} /> : null}
     </section>
@@ -79,7 +61,6 @@ function CatalogPanel({ client }: { client: ClawClient }) {
   const queryClient = useQueryClient();
   const [search, setSearch] = useState("");
   const [selectedIdentity, setSelectedIdentity] = useState<Pick<SkillCatalogItem, "publisher" | "name"> | null>(null);
-  const [sourceId, setSourceId] = useState("");
   const [packageFiles, setPackageFiles] = useState<File[]>([]);
   const catalog = useQuery({
     queryKey: ["skill-catalog", client.baseUrl, search],
@@ -181,7 +162,7 @@ function CatalogPanel({ client }: { client: ClawClient }) {
   });
   const publish = useMutation({
     mutationFn: async () => {
-      if (!sourceId.trim() || packageFiles.length === 0) throw new Error("请选择来源和已签名包文件");
+      if (packageFiles.length === 0) throw new Error("请选择已签名包文件");
       const selectedFiles = normalizeSkillPackageFiles(
         packageFiles.map((file) => [file.webkitRelativePath || file.name, file] as const),
       );
@@ -189,8 +170,8 @@ function CatalogPanel({ client }: { client: ClawClient }) {
       for (const [path, file] of Object.entries(selectedFiles)) files[path] = await fileBase64(file);
       const encodedBytes = Object.values(files).reduce((total, value) => total + value.length, 0);
       return encodedBytes > 8 * 1024 * 1024
-        ? publishSkillFilesStaged(client, sourceId.trim(), files)
-        : publishSkillFiles(client, sourceId.trim(), files);
+        ? publishSkillFilesStaged(client, files)
+        : publishSkillFiles(client, files);
     },
     onSuccess: () => {
       setPackageFiles([]);
@@ -206,7 +187,6 @@ function CatalogPanel({ client }: { client: ClawClient }) {
           <details>
             <summary>发布已签名 Skill 包（小包）</summary>
             <div className="stack form-block">
-              <label>Source ID<input value={sourceId} onChange={(event) => setSourceId(event.target.value)} placeholder="sks_..." /></label>
               <label>包目录<input type="file" multiple {...({ webkitdirectory: "" } as Record<string, string>)} onChange={(event) => setPackageFiles(Array.from(event.target.files ?? []))} /></label>
               <p className="mono">私钥不得进入 AuraX。请先离线签名；大包由 AuraClaw 代理写入对象存储，最终签名、digest 与内容策略也由 AuraClaw 校验。</p>
               <button className="btn amber" type="button" disabled={publish.isPending} onClick={() => publish.mutate()}>发布</button>
@@ -271,26 +251,7 @@ function CatalogPanel({ client }: { client: ClawClient }) {
   );
 }
 
-function SourcesPanel({ client }: { client: ClawClient }) {
-  const queryClient = useQueryClient();
-  const [editing, setEditing] = useState<SkillSourceRecord | null>(null);
-  const [form, setForm] = useState<SkillSourceInput>(EMPTY_SOURCE);
-  const [metadataText, setMetadataText] = useState("{}");
-  const sources = useQuery({ queryKey: ["skill-sources", client.baseUrl], queryFn: async () => (await listSkillSources(client)).body.sources });
-  const syncState = useQuery({ queryKey: ["skill-source-sync", client.baseUrl, editing?.source_id], queryFn: async () => (await getSkillSourceSyncState(client, editing!.source_id)).body.sync_state, enabled: editing !== null });
-  const refresh = () => void queryClient.invalidateQueries({ queryKey: ["skill-sources"] });
-  const save = useMutation({ mutationFn: () => {
-    const metadata = JSON.parse(metadataText) as Record<string, unknown>;
-    if (hasSensitiveMetadataKey(metadata)) throw new Error("config_metadata 不得包含 Secret；请使用 credential_ref");
-    return saveSkillSource(client, { ...form, config_metadata: metadata }, editing);
-  }, onSuccess: () => { setEditing(null); setForm(EMPTY_SOURCE); setMetadataText("{}"); refresh(); } });
-  const sync = useMutation({ mutationFn: (source: SkillSourceRecord) => syncSkillSource(client, source.source_id), onSuccess: () => { refresh(); void queryClient.invalidateQueries({ queryKey: ["skill-source-sync"] }); } });
-  const retire = useMutation({ mutationFn: async (source: SkillSourceRecord) => { const reason = window.prompt("退役 reason code", "source_retired")?.trim(); if (!reason) throw new Error("需要 reason code"); return retireSkillSource(client, source, reason); }, onSuccess: refresh });
-  const select = (source: SkillSourceRecord) => { setEditing(source); setMetadataText(JSON.stringify(source.config_metadata, null, 2)); setForm({ source_id: source.source_id, kind: "mcp", desired_state: source.desired_state === "enabled" ? "enabled" : "disabled", publisher_allowlist: source.publisher_allowlist, credential_ref: source.credential_ref, config_metadata: source.config_metadata, priority: source.priority }); };
-  return <div className="skill-admin-grid"><div className="list">{(sources.data ?? []).map((source) => <div className="card" key={source.source_id}><div className="row"><button className="btn ghost" type="button" onClick={() => select(source)}>{source.source_id}</button><span className="pill">{source.desired_state}</span><span className="mono">priority {source.priority} · rev {source.revision}</span><button className="btn ghost" type="button" disabled={source.desired_state !== "enabled" || sync.isPending} onClick={() => sync.mutate(source)}>同步</button><button className="btn danger ghost" type="button" onClick={() => retire.mutate(source)}>退役</button></div><p className="mono">Publisher allowlist: {source.publisher_allowlist.join(", ") || "—"} · credential_ref: {source.credential_ref || "—"}</p></div>)}</div><aside className="card stack"><h2>{editing ? "编辑 Source" : "创建 Source"}</h2><label>Source ID<input disabled={editing !== null} value={form.source_id} onChange={(e) => setForm({ ...form, source_id: e.target.value })} /></label><label>Desired state<select value={form.desired_state} onChange={(e) => setForm({ ...form, desired_state: e.target.value as "enabled" | "disabled" })}><option value="disabled">disabled</option><option value="enabled">enabled</option></select></label><label>Publisher allowlist<input value={form.publisher_allowlist.join(",")} onChange={(e) => setForm({ ...form, publisher_allowlist: e.target.value.split(",").map((v) => v.trim()).filter(Boolean) })} /></label><label>Credential reference<input value={form.credential_ref ?? ""} onChange={(e) => setForm({ ...form, credential_ref: e.target.value || null })} /></label><label>Priority<input type="number" value={form.priority} onChange={(e) => setForm({ ...form, priority: Number(e.target.value) })} /></label><label>Config metadata JSON<textarea value={metadataText} onChange={(e) => setMetadataText(e.target.value)} /></label>{syncState.data ? <p className="mono">generation {syncState.data.generation} · failures {syncState.data.consecutive_failures} · {syncState.data.safe_error_code ?? "healthy"}</p> : null}<div className="row"><button className="btn amber" type="button" onClick={() => save.mutate()} disabled={save.isPending}>保存</button>{editing ? <button className="btn ghost" type="button" onClick={() => { setEditing(null); setForm(EMPTY_SOURCE); setMetadataText("{}"); }}>取消</button> : null}</div>{save.error || sync.error || retire.error ? <p className="error">{errorText(save.error ?? sync.error ?? retire.error)}</p> : null}</aside></div>;
-}
-
-function PublishersPanel({ client }: { client: ClawClient }) {
+ function PublishersPanel({ client }: { client: ClawClient }) {
   const queryClient = useQueryClient();
   const [publisher, setPublisher] = useState(""); const [displayName, setDisplayName] = useState(""); const [keyId, setKeyId] = useState(""); const [publicKey, setPublicKey] = useState(""); const [selected, setSelected] = useState<SkillPublisherView | null>(null);
   const publishers = useQuery({ queryKey: ["skill-publishers", client.baseUrl], queryFn: async () => (await listSkillPublishers(client)).body.publishers });
@@ -317,12 +278,4 @@ async function fileBase64(file: File): Promise<string> {
   let binary = "";
   for (const byte of bytes) binary += String.fromCharCode(byte);
   return btoa(binary);
-}
-
-function hasSensitiveMetadataKey(value: unknown): boolean {
-  if (!value || typeof value !== "object") return false;
-  return Object.entries(value).some(([key, child]) =>
-    /(secret|token|password|api[_-]?key|credential|private[_-]?key)/i.test(key)
-      || hasSensitiveMetadataKey(child),
-  );
 }

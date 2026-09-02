@@ -7,7 +7,6 @@ import {
   normalizeSkillPackageFiles,
   publishSkillFilesStaged,
   revokeSkillPublisherKey,
-  saveSkillSource,
 } from "./skills.js";
 import type { SkillPublisherView } from "./types.js";
 
@@ -115,51 +114,10 @@ describe("Skill Admin SDK", () => {
     expect(headers["Idempotency-Key"]).toContain("skill-disable:");
   });
 
-  it("uses PATCH and expected revision for an existing Source", async () => {
-    let method = "";
-    let expectedRevision = "";
-    const client = new ClawClient({
-      baseUrl: "http://claw.example",
-      fetch: (async (_input, init) => {
-        method = init?.method ?? "";
-        expectedRevision = (init?.headers as Record<string, string>)["X-Expected-Revision"] ?? "";
-        return jsonResponse({ source: { source_id: "sks_mcp", revision: 3 } });
-      }) as typeof fetch,
-    });
-    await saveSkillSource(
-      client,
-      {
-        source_id: "sks_mcp",
-        kind: "mcp",
-        desired_state: "enabled",
-        publisher_allowlist: ["acme"],
-        credential_ref: "vault/acme#token",
-        config_metadata: {},
-        priority: 10,
-      },
-      {
-        source_id: "sks_mcp",
-        tenant_id: "local",
-        kind: "mcp",
-        desired_state: "enabled",
-        publisher_allowlist: ["acme"],
-        credential_ref: "vault/acme#token",
-        config_metadata: {},
-        priority: 0,
-        revision: 2,
-        created_by: "user",
-        updated_by: "user",
-        created_at: "2026-01-01T00:00:00Z",
-        updated_at: "2026-01-01T00:00:00Z",
-      },
-    );
-    expect(method).toBe("PATCH");
-    expect(expectedRevision).toBe("2");
-  });
-
   it("uploads a canonical staged archive before artifact publication", async () => {
     const calls: string[] = [];
     let uploadHeaders: Record<string, string> = {};
+    let publicationBody: Record<string, unknown> = {};
     const client = new ClawClient({
       baseUrl: "http://claw.example",
       fetch: (async (input, init) => {
@@ -173,10 +131,11 @@ describe("Skill Admin SDK", () => {
             status: "ready",
           }, 201);
         }
+        publicationBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
         return jsonResponse({ publisher: "platform", name: "release.prepare", version: "1.0.0" }, 201);
       }) as typeof fetch,
     });
-    await publishSkillFilesStaged(client, "sks_upload", {
+    await publishSkillFilesStaged(client, {
       "SKILL.md": btoa("# Release"),
       "manifest.json": btoa("{}"),
     });
@@ -189,6 +148,7 @@ describe("Skill Admin SDK", () => {
     );
     expect(uploadHeaders["X-Content-SHA256"]).toMatch(/^[0-9a-f]{64}$/);
     expect(uploadHeaders["X-Tenant-ID"]).toBe("platform");
+    expect(publicationBody).not.toHaveProperty("source_id");
   });
 
   it("uses the key revision and governance headers when revoking a publisher key", async () => {

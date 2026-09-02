@@ -226,7 +226,6 @@ export type SkillInstallationRecord = {
   version_constraint: string;
   pinned_package_digest: string | null;
   status: string;
-  source_id: string | null;
   auto_upgrade: boolean;
   revision: number;
   reason_code: string | null;
@@ -243,7 +242,6 @@ export type SkillPublicationRecord = {
   version: string;
   package_digest: string;
   status: string;
-  source_id: string | null;
   revision: number;
   reason_code: string | null;
   revocation_action: string | null;
@@ -284,7 +282,6 @@ export type SkillCatalogItem = {
   publication?: {
     status: string;
     revision: number | null;
-    source_id: string | null;
   };
   installation?: SkillInstallationRecord | null;
   availability?: string;
@@ -296,33 +293,6 @@ export type SkillCatalogPage = {
   items?: SkillCatalogItem[];
   skills: SkillCatalogItem[];
   next_cursor?: string | null;
-};
-
-export type SkillSourceRecord = {
-  source_id: string;
-  tenant_id: string;
-  kind: "mcp" | string;
-  desired_state: string;
-  publisher_allowlist: string[];
-  credential_ref: string | null;
-  config_metadata: Record<string, unknown>;
-  priority: number;
-  revision: number;
-  created_by: string;
-  updated_by: string;
-  created_at: string;
-  updated_at: string;
-};
-
-export type SkillSourceSyncState = {
-  source_id: string;
-  generation: number;
-  cursor: string | null;
-  complete_snapshot: boolean;
-  last_success_at: string | null;
-  last_attempt_at: string | null;
-  consecutive_failures: number;
-  safe_error_code: string | null;
 };
 
 export type SkillPublisherKeyRecord = {

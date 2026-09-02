@@ -10,8 +10,6 @@ import type {
   SkillPublicationRecord,
   SkillPublisherView,
   SkillPublisherKeyRecord,
-  SkillSourceRecord,
-  SkillSourceSyncState,
   SkillSummary,
 } from "./types.js";
 
@@ -24,7 +22,6 @@ export type SkillCatalogFilters = {
   risk_level?: string;
   publication_status?: string;
   installation_status?: string;
-  source_id?: string;
   cursor?: string;
   limit?: number;
 };
@@ -127,74 +124,6 @@ export function listSkillPackages(client: ClawClient, publisher?: string, name?:
   );
 }
 
-export type SkillSourceInput = {
-  source_id: string;
-  kind: "mcp";
-  desired_state: "enabled" | "disabled";
-  publisher_allowlist: string[];
-  credential_ref: string | null;
-  config_metadata: Record<string, unknown>;
-  priority: number;
-};
-
-export function listSkillSources(client: ClawClient) {
-  return client.request<{ sources: SkillSourceRecord[] }>("GET", "/v1/admin/skill-sources");
-}
-
-export function saveSkillSource(
-  client: ClawClient,
-  input: SkillSourceInput,
-  existing?: SkillSourceRecord | null,
-) {
-  const path = existing
-    ? `/v1/admin/skill-sources/${segment(input.source_id)}`
-    : "/v1/admin/skill-sources";
-  const requestOptions: {
-    json: SkillSourceInput;
-    idempotencyKey: string;
-    expectedRevision?: number;
-  } = {
-    json: input,
-    idempotencyKey: newIdempotencyKey(existing ? "skill-source-update" : "skill-source-create"),
-  };
-  if (existing) requestOptions.expectedRevision = existing.revision;
-  return client.request<{ source: SkillSourceRecord }>(
-    existing ? "PATCH" : "POST",
-    path,
-    requestOptions,
-  );
-}
-
-export function syncSkillSource(client: ClawClient, sourceId: string) {
-  return client.request<{ sync: Record<string, unknown> }>(
-    "POST",
-    `/v1/admin/skill-sources/${segment(sourceId)}:sync`,
-  );
-}
-
-export function getSkillSourceSyncState(client: ClawClient, sourceId: string) {
-  return client.request<{ source_id: string; sync_state: SkillSourceSyncState | null }>(
-    "GET",
-    `/v1/admin/skill-sources/${segment(sourceId)}/sync-state`,
-  );
-}
-
-export function retireSkillSource(
-  client: ClawClient,
-  source: SkillSourceRecord,
-  reasonCode: string,
-) {
-  return client.request<{ source: SkillSourceRecord }>(
-    "DELETE",
-    `/v1/admin/skill-sources/${segment(source.source_id)}`,
-    {
-      idempotencyKey: newIdempotencyKey("skill-source-retire"),
-      expectedRevision: source.revision,
-      headers: reasonHeaders(reasonCode),
-    },
-  );
-}
-
 export function listSkillPublishers(client: ClawClient) {
   return client.request<{ publishers: SkillPublisherView[]; next_cursor: string | null }>(
     "GET",
@@ -275,11 +204,10 @@ export function changeSkillPublisherStatus(
 
 export function publishSkillFiles(
   client: ClawClient,
-  sourceId: string,
   files: Record<string, string>,
 ) {
   return client.request<SkillCatalogItem>("POST", "/v1/admin/skill-publications", {
-    json: { source_id: sourceId, activate: true, files },
+    json: { activate: true, files },
     idempotencyKey: newIdempotencyKey("skill-publish"),
     expectedRevision: 0,
   });
@@ -328,7 +256,6 @@ export function normalizeSkillPackageFiles<T>(
 
 export async function publishSkillFilesStaged(
   client: ClawClient,
-  sourceId: string,
   files: Record<string, string>,
   name = "skill-package.json",
 ) {
@@ -354,7 +281,6 @@ export async function publishSkillFilesStaged(
   );
   return client.request<SkillCatalogItem>("POST", "/v1/admin/skill-publications", {
     json: {
-      source_id: sourceId,
       activate: true,
       artifact_ref: staged.body.artifact_ref,
       expected_digest: `sha256:${checksum}`,
