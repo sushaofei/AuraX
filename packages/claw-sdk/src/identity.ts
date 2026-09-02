@@ -1,11 +1,15 @@
-/** v1 mock identity. Do not expose a UI switcher. */
+export type MockIdentity = {
+  tenantId: string;
+  deptId: string;
+  userId: string;
+};
+
+/** Default development identity used until AuraX supplies test configuration. */
 export const MOCK_IDENTITY = {
   tenantId: "platform",
   deptId: "local-org",
   userId: "local-user",
-} as const;
-
-export type MockIdentity = typeof MOCK_IDENTITY;
+} as const satisfies MockIdentity;
 
 export function identityHeaders(
   identity: MockIdentity = MOCK_IDENTITY,

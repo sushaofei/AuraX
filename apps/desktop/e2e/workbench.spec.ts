@@ -7,7 +7,7 @@ test.beforeEach(async ({ page }) => {
   });
 });
 
-test("shell shows AuraX and mock identity, not an account switcher", async ({ page }) => {
+test("shell shows AuraX and the active test identity", async ({ page }) => {
   await mockClaw(page);
   await page.goto("/");
   await expect(page.getByText("AuraX", { exact: true }).first()).toBeVisible();
@@ -53,12 +53,48 @@ test("critical views load without hitting internal APIs or AuraMCP", async ({ pa
   await expect(page.getByText("发布已签名 Skill 包（小包）")).toBeVisible();
   await expect(page.getByText("AuraX 不执行或签名 Skill")).toBeVisible();
 
-  await page.getByRole("button", { name: "连接" }).click();
+  await page.getByRole("button", { name: "配置" }).click();
   await expect(page.getByText("X-Tenant-ID: platform")).toBeVisible();
-  await expect(page.getByText("界面不能切换账号")).toBeVisible();
+  await expect(page.getByRole("button", { name: "保存测试身份" })).toBeVisible();
 
   expect(forbidden).toEqual([]);
   expect(traffic.paths.some((path) => path.includes("/internal/"))).toBe(false);
+});
+
+test("configured test identity is persisted and injected into AuraClaw requests", async ({ page }) => {
+  const traffic = await mockClaw(page);
+  await page.goto("/");
+  await page.getByRole("button", { name: "配置" }).click();
+  await page.getByLabel("租户 ID").fill("tenant-chain");
+  await page.getByLabel("部门 ID").fill("dept-chain");
+  await page.getByLabel("用户 ID").fill("user-chain");
+  await page.getByRole("button", { name: "保存测试身份" }).click();
+
+  await expect(page.locator(".rail .meta")).toContainText("tenant-chain");
+  await expect(page.locator(".rail .meta")).toContainText("dept-chain / user-chain");
+  await page.getByRole("button", { name: "历史" }).click();
+  await expect(page.getByRole("heading", { name: "历史" })).toBeVisible();
+
+  expect(
+    traffic.identities.some(
+      (identity) =>
+        identity.tenantId === "tenant-chain" &&
+        identity.deptId === "dept-chain" &&
+        identity.userId === "user-chain",
+    ),
+  ).toBe(true);
+
+  await expect
+    .poll(() =>
+      page.evaluate(() => window.localStorage.getItem("aurax.claw.testIdentity")),
+    )
+    .toBe(
+      JSON.stringify({
+        tenantId: "tenant-chain",
+        deptId: "dept-chain",
+        userId: "user-chain",
+      }),
+    );
 });
 
 test("MCP view exposes quarantined Catalog instead of only aggregate runtime state", async ({ page }) => {

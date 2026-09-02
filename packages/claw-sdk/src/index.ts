@@ -5,7 +5,7 @@ export {
   newIdempotencyKey,
   type ClawApiErrorFormatOptions,
 } from "./errors.js";
-export { MOCK_IDENTITY, identityHeaders } from "./identity.js";
+export { MOCK_IDENTITY, identityHeaders, type MockIdentity } from "./identity.js";
 export * from "./mcp.js";
 export * from "./runtime-events.js";
 export * from "./skills.js";

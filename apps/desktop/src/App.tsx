@@ -1,4 +1,4 @@
-import { ClawClient, MOCK_IDENTITY } from "@aurax/claw-sdk";
+import { ClawClient } from "@aurax/claw-sdk";
 import { useEffect, useMemo, useState } from "react";
 import {
   loadLastChatSessionId,
@@ -6,7 +6,12 @@ import {
   saveLastChatSessionId,
   saveLastTaskSessionId,
 } from "./cache";
-import { loadBaseUrl, saveBaseUrl } from "./connection";
+import {
+  loadBaseUrl,
+  loadTestIdentity,
+  saveBaseUrl,
+  saveTestIdentity,
+} from "./connection";
 import { ChatView } from "./views/ChatView";
 import { McpView } from "./views/McpView";
 import { SessionsView } from "./views/SessionsView";
@@ -19,7 +24,8 @@ type View = "chat" | "task" | "sessions" | "mcp" | "skills" | "settings";
 export function App() {
   const [view, setView] = useState<View>("chat");
   const [baseUrl, setBaseUrl] = useState(loadBaseUrl);
-  const client = useMemo(() => new ClawClient({ baseUrl }), [baseUrl]);
+  const [identity, setIdentity] = useState(loadTestIdentity);
+  const client = useMemo(() => new ClawClient({ baseUrl, identity }), [baseUrl, identity]);
   const [chatSessionId, setChatSessionId] = useState<string | null>(loadLastChatSessionId);
   const [taskSessionId, setTaskSessionId] = useState<string | null>(loadLastTaskSessionId);
 
@@ -44,7 +50,7 @@ export function App() {
               ["sessions", "历史"],
               ["mcp", "MCP"],
               ["skills", "Skill"],
-              ["settings", "连接"],
+              ["settings", "配置"],
             ] as const
           ).map(([id, label]) => (
             <button
@@ -58,9 +64,9 @@ export function App() {
           ))}
         </nav>
         <p className="meta">
-          {MOCK_IDENTITY.tenantId}
+          {identity.tenantId}
           <br />
-          {MOCK_IDENTITY.deptId} / {MOCK_IDENTITY.userId}
+          {identity.deptId} / {identity.userId}
           <br />
           关窗不会取消任务
         </p>
@@ -99,9 +105,20 @@ export function App() {
         {view === "settings" ? (
           <SettingsView
             baseUrl={baseUrl}
-            onSave={(url) => {
+            identity={identity}
+            onSaveBaseUrl={(url) => {
               saveBaseUrl(url);
               setBaseUrl(url);
+            }}
+            onSaveIdentity={(nextIdentity) => {
+              saveTestIdentity(nextIdentity);
+              setIdentity({
+                tenantId: nextIdentity.tenantId.trim(),
+                deptId: nextIdentity.deptId.trim(),
+                userId: nextIdentity.userId.trim(),
+              });
+              setChatSessionId(null);
+              setTaskSessionId(null);
             }}
           />
         ) : null}

@@ -17,6 +17,16 @@ describe("mock identity", () => {
       "X-Actor-ID": "local-user",
     });
   });
+
+  it("injects configured test identity headers", () => {
+    expect(
+      identityHeaders({ tenantId: "tenant-7", deptId: "dept-9", userId: "user-11" }),
+    ).toEqual({
+      "X-Tenant-ID": "tenant-7",
+      "X-Dept-ID": "dept-9",
+      "X-Actor-ID": "user-11",
+    });
+  });
 });
 
 describe("ClawClient", () => {

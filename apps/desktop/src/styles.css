@@ -129,6 +129,8 @@ section > h1,
   letter-spacing: -0.03em;
 }
 .lede { color: #5c574f; max-width: 58ch; margin: 0 0 28px; line-height: 1.55; }
+.helper { color: #6b655c; font-size: 13px; line-height: 1.5; margin: 0; }
+.settings-view { max-width: 780px; }
 
 .page-head {
   display: flex;

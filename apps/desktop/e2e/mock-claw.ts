@@ -2,6 +2,7 @@ import { type Page } from "@playwright/test";
 
 export type ClawTraffic = {
   paths: string[];
+  identities: Array<{ tenantId: string; deptId: string; userId: string }>;
   cancels: number;
   approvals: number;
   approvalExpectedVersions: string[];
@@ -20,6 +21,7 @@ export async function mockClaw(
 ): Promise<ClawTraffic> {
   const traffic: ClawTraffic = {
     paths: [],
+    identities: [],
     cancels: 0,
     approvals: 0,
     approvalExpectedVersions: [],
@@ -73,6 +75,11 @@ export async function mockClaw(
         body: JSON.stringify(body),
       });
     traffic.paths.push(`${route.request().method()} ${url.pathname}`);
+    traffic.identities.push({
+      tenantId: route.request().headers()["x-tenant-id"] ?? "",
+      deptId: route.request().headers()["x-dept-id"] ?? "",
+      userId: route.request().headers()["x-actor-id"] ?? "",
+    });
     if (url.pathname.endsWith("/cancel")) {
       traffic.cancels += 1;
     }

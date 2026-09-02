@@ -6,7 +6,7 @@ AuraX 是 AuraClaw 的 **macOS 工作台**：发命令、查投影、订 SSE、�
 
 ## v1 范围
 
-- 连接设置：只改 AuraClaw base URL。身份写死 `platform` / `local-org` / `local-user`。
+- 环境配置：可设置 AuraClaw base URL，以及测试请求使用的租户 ID、部门 ID、用户 ID；默认值为 `platform` / `local-org` / `local-user`。
 - **对话（流式）**：`POST /v1/tasks`（`source=chat`）→ SSE `model.output.delta` 实时展示 → transcript 终态对齐；助手回复用 `react-markdown` + `remark-gfm`。
 - **任务（API 调试）**：`POST /v1/tasks`（异步 202 + `GET /result?wait=true`）或 `POST /v1/tasks/sync`（同步）；以 result 回调为权威结果；含执行轨迹面板。
 - Session 历史：`GET /v1/tasks?kind=chat`，按本机来源标记区分「对话」与「任务」Tab。关窗口 ≠ 取消任务。
