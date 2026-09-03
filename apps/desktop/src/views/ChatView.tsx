@@ -13,17 +13,22 @@ import {
   type ModelOutputDeltaState,
   type TranscriptMessage,
 } from "@aurax/claw-sdk";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
 import {
   clearStreamingBuffer,
   loadChatDraft,
   loadLastEventId,
+  loadTraceOpen,
+  loadTraceWidth,
   loadStreamingBuffer,
   saveChatDraft,
   saveLastEventId,
+  saveTraceOpen,
+  saveTraceWidth,
   saveSessionOrigin,
   saveStreamingBuffer,
 } from "../cache";
+import { ExecutionTracePanel } from "../components/ExecutionTracePanel";
 import { MarkdownBody } from "../components/MarkdownBody";
 import { SkillSelector } from "../components/SkillSelector";
 import { errorText, isNotFound } from "../lib/errors";
@@ -57,17 +62,33 @@ export function ChatView({
   const [streamNote, setStreamNote] = useState("");
   const [optimistic, setOptimistic] = useState<string[]>([]);
   const [streamingText, setStreamingText] = useState("");
+  const [traceOpen, setTraceOpen] = useState(() => loadTraceOpen("chat"));
+  const [traceCount, setTraceCount] = useState(0);
+  const [traceWidth, setTraceWidth] = useState(loadTraceWidth);
   const deltaStateRef = useRef<ModelOutputDeltaState>(createModelOutputDeltaState());
   const activeSessionRef = useRef<string | null>(sessionId);
+  const chatScrollRef = useRef<HTMLDivElement | null>(null);
+  const chatEndRef = useRef<HTMLDivElement | null>(null);
+  const composerInputRef = useRef<HTMLTextAreaElement | null>(null);
+  const followTailRef = useRef(true);
 
   /* eslint-disable react-hooks/set-state-in-effect -- session transitions restore persisted per-session UI state */
   useEffect(() => {
     activeSessionRef.current = sessionId;
+    followTailRef.current = true;
   }, [sessionId]);
 
   useEffect(() => {
     saveChatDraft(draft, sessionId);
   }, [draft, sessionId]);
+
+  useEffect(() => {
+    saveTraceOpen(traceOpen, "chat");
+  }, [traceOpen]);
+
+  useEffect(() => {
+    saveTraceWidth(traceWidth);
+  }, [traceWidth]);
 
   const task = useQuery({
     queryKey: ["task", client.baseUrl, sessionId],
@@ -286,6 +307,7 @@ export function ChatView({
       return (await followUp(client, sessionId, text, expectedVersion, current.status)).body;
     },
     onMutate: (text) => {
+      followTailRef.current = true;
       setOptimistic((prev) => [...prev, text]);
     },
     onSuccess: (_data, _text, _context) => {
@@ -343,140 +365,216 @@ export function ChatView({
   const closed = task.data?.status === "closed";
   const missing = isNotFound(task.error);
   const showStreaming = streamingText.length > 0;
+  const traceVisible = Boolean(sessionId && !missing && traceOpen);
+
+  useEffect(() => {
+    if (followTailRef.current) {
+      chatEndRef.current?.scrollIntoView({ block: "end" });
+    }
+  }, [messages.length, pendingOptimistic.length, showStreaming, streamingText]);
+
+  useEffect(() => {
+    if (!draft && composerInputRef.current) {
+      composerInputRef.current.style.height = "";
+    }
+  }, [draft]);
 
   return (
-    <section className="bench chat-stream">
-      <p className="kicker">Live chat</p>
-      <div className="page-head">
-        <h1>对话</h1>
-        <div className="row">
-          <button className="btn ghost" type="button" onClick={() => onSession(null)}>
-            新开一轮
-          </button>
-        </div>
-      </div>
-      <p className="lede">
-        SSE 实时展示 model.output.delta；终态以 transcript 为准。关闭窗口不会取消任务。
-      </p>
-      {missing ? (
-        <p className="error">
-          缓存的 Session 已不存在。
-          <button className="btn ghost" type="button" onClick={() => onSession(null)}>
-            开始新对话
-          </button>
-        </p>
-      ) : null}
-      {sessionId && !missing ? (
-        <p className="session-meta mono">
-          {sessionId} · {task.data?.status ?? "…"} / {task.data?.run_status ?? "…"}
-          {streamNote ? ` · ${streamNote}` : ""}
-        </p>
-      ) : null}
-      {runStatus === "failed" ? (
-        <div className="card run-failure" role="alert">
-          <strong>本轮执行失败</strong>
-          {runErrorCode ? <p className="mono">{runErrorCode}</p> : null}
-          <p className="error">{runErrorSummary ?? "执行未完成，请稍后重试或新开一轮。"}</p>
-          <p className="mono">下方 transcript 保留会话历史，不代表本轮执行成功。</p>
-        </div>
-      ) : null}
-      {!sessionId ? (
-        <p className="empty">还没有 Session。勾选要用的 Skill，输入目标后开始对话。</p>
-      ) : null}
-      <SkillSelector client={client} locked={closed || waiting} />
-      <div className="transcript">
-        {messages.map((message, index) => (
-          <div
-            key={message.event_id ?? `${message.role}-${index}`}
-            className={`bubble ${message.role === "user" ? "user" : "assistant"}`}
-          >
-            {message.role === "user" ? (
-              message.content
-            ) : (
-              <MarkdownBody text={message.content} />
-            )}
+    <div
+      className={`chat-workspace ${traceVisible ? "trace-open" : "trace-closed"}`}
+      style={{ "--trace-panel-width": `${traceWidth}px` } as CSSProperties}
+    >
+      <section className="bench chat-stream">
+        <header className="chat-toolbar">
+          <div>
+            <p className="kicker">Live chat</p>
+            <h1>对话</h1>
+            <p className="chat-runtime-note">model.output.delta 实时输出 · transcript 作为终态</p>
           </div>
-        ))}
-        {pendingOptimistic.map((text, index) => (
-          <div key={`optimistic-${index}`} className="bubble user pending">
-            {text}
-          </div>
-        ))}
-        {showStreaming ? (
-          <div className="bubble assistant streaming">
-            <span className="streaming-text">{streamingText}</span>
-            <span className="streaming-cursor" aria-hidden="true">▍</span>
-          </div>
-        ) : null}
-      </div>
-      {transcript.data?.pending_approval ? (
-        <div className="card">
-          <strong>待人审</strong>
-          <p>{transcript.data.pending_approval.reason}</p>
-          <p className="mono">{transcript.data.pending_approval.tool_name}</p>
-          {approve.isSuccess &&
-          approve.variables?.approvalId === transcript.data.pending_approval.approval_id ? (
-            <p className="mono">审批已提交，等待 Runtime 恢复…</p>
-          ) : null}
           <div className="row">
             <button
-              className="btn amber"
+              className="btn ghost"
               type="button"
-              disabled={approve.isPending}
-              onClick={() =>
-                approve.mutate({
-                  approvalId: transcript.data.pending_approval!.approval_id,
-                  decision: "approved",
-                })
-              }
+              aria-expanded={traceVisible}
+              aria-controls="chat-execution-trace"
+              disabled={!sessionId || missing}
+              onClick={() => setTraceOpen((open) => !open)}
             >
-              {approve.isPending && approve.variables?.decision === "approved"
-                ? "提交中…"
-                : "批准"}
+              {traceVisible ? "收起轨迹" : "执行轨迹"}
+              {traceCount > 0 ? ` · ${traceCount}` : ""}
             </button>
-            <button
-              className="btn danger"
-              type="button"
-              disabled={approve.isPending}
-              onClick={() =>
-                approve.mutate({
-                  approvalId: transcript.data.pending_approval!.approval_id,
-                  decision: "rejected",
-                })
-              }
-            >
-              {approve.isPending && approve.variables?.decision === "rejected"
-                ? "提交中…"
-                : "拒绝"}
+            <button className="btn ghost" type="button" onClick={() => onSession(null)}>
+              新开一轮
             </button>
           </div>
-          {approve.error ? <p className="error">审批提交失败：{errorText(approve.error)}</p> : null}
-        </div>
-      ) : null}
-      <div className="composer stack">
-        <textarea
-          value={draft}
-          placeholder={closed ? "Session 已结束，请新开一轮" : "要 AuraClaw 做什么？"}
-          disabled={closed || missing}
-          onChange={(event) => setDraft(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === "Enter" && (event.metaKey || event.ctrlKey) && draft.trim()) {
-              send.mutate(draft.trim());
-            }
+        </header>
+
+        <div
+          className="chat-scroll"
+          ref={chatScrollRef}
+          onScroll={() => {
+            const element = chatScrollRef.current;
+            if (!element) return;
+            followTailRef.current = element.scrollHeight - element.scrollTop - element.clientHeight < 80;
           }}
-        />
-        <div className="row">
-          <button
-            className="btn"
-            type="button"
-            disabled={!draft.trim() || send.isPending || closed || waiting || missing}
-            onClick={() => send.mutate(draft.trim())}
-          >
-            {sessionId ? "追问" : "开始"}
-          </button>
+        >
+          {missing ? (
+            <div className="chat-notice error">
+              缓存的 Session 已不存在。
+              <button className="btn ghost" type="button" onClick={() => onSession(null)}>
+                开始新对话
+              </button>
+            </div>
+          ) : null}
+          {sessionId && !missing ? (
+            <p className="chat-status-line session-meta mono">
+              {sessionId} · {task.data?.status ?? "…"} / {task.data?.run_status ?? "…"}
+              {streamNote ? ` · ${streamNote}` : ""}
+            </p>
+          ) : null}
+          {runStatus === "failed" ? (
+            <div className="card run-failure" role="alert">
+              <strong>本轮执行失败</strong>
+              {runErrorCode ? <p className="mono">{runErrorCode}</p> : null}
+              <p className="error">{runErrorSummary ?? "执行未完成，请稍后重试或新开一轮。"}</p>
+              <p className="mono">下方 transcript 保留会话历史，不代表本轮执行成功。</p>
+            </div>
+          ) : null}
+          <SkillSelector client={client} locked={closed || waiting} compact />
+          {!sessionId && messages.length === 0 ? (
+            <div className="chat-empty-state">
+              <span aria-hidden="true">✦</span>
+              <p className="chat-empty-title">开始一段新对话</p>
+              <p>选择允许使用的 Skill，然后告诉 AuraClaw 你想完成什么。</p>
+            </div>
+          ) : null}
+          <div className="transcript">
+            {messages.map((message, index) => (
+              <article
+                key={message.event_id ?? `${message.role}-${index}`}
+                className={`bubble ${message.role === "user" ? "user" : "assistant"}`}
+              >
+                {message.role === "user" ? (
+                  message.content
+                ) : (
+                  <MarkdownBody text={message.content} />
+                )}
+              </article>
+            ))}
+            {pendingOptimistic.map((text, index) => (
+              <article key={`optimistic-${index}`} className="bubble user pending">
+                {text}
+              </article>
+            ))}
+            {showStreaming ? (
+              <article className="bubble assistant streaming">
+                <span className="streaming-text">{streamingText}</span>
+                <span className="streaming-cursor" aria-hidden="true">▍</span>
+              </article>
+            ) : null}
+          </div>
+          {transcript.data?.pending_approval ? (
+            <div className="card chat-approval">
+              <strong>待人审</strong>
+              <p>{transcript.data.pending_approval.reason}</p>
+              <p className="mono">{transcript.data.pending_approval.tool_name}</p>
+              {approve.isSuccess &&
+              approve.variables?.approvalId === transcript.data.pending_approval.approval_id ? (
+                <p className="mono">审批已提交，等待 Runtime 恢复…</p>
+              ) : null}
+              <div className="row">
+                <button
+                  className="btn amber"
+                  type="button"
+                  disabled={approve.isPending}
+                  onClick={() =>
+                    approve.mutate({
+                      approvalId: transcript.data.pending_approval!.approval_id,
+                      decision: "approved",
+                    })
+                  }
+                >
+                  {approve.isPending && approve.variables?.decision === "approved"
+                    ? "提交中…"
+                    : "批准"}
+                </button>
+                <button
+                  className="btn danger"
+                  type="button"
+                  disabled={approve.isPending}
+                  onClick={() =>
+                    approve.mutate({
+                      approvalId: transcript.data.pending_approval!.approval_id,
+                      decision: "rejected",
+                    })
+                  }
+                >
+                  {approve.isPending && approve.variables?.decision === "rejected"
+                    ? "提交中…"
+                    : "拒绝"}
+                </button>
+              </div>
+              {approve.error ? <p className="error">审批提交失败：{errorText(approve.error)}</p> : null}
+            </div>
+          ) : null}
+          <div className="chat-end" ref={chatEndRef} aria-hidden="true" />
         </div>
-        {send.error ? <p className="error">{errorText(send.error)}</p> : null}
-      </div>
-    </section>
+
+        <div className="composer chat-composer">
+          <textarea
+            ref={composerInputRef}
+            value={draft}
+            aria-label="消息"
+            placeholder={closed ? "Session 已结束，请新开一轮" : "要 AuraClaw 做什么？"}
+            disabled={closed || missing}
+            onChange={(event) => {
+              setDraft(event.target.value);
+              event.currentTarget.style.height = "auto";
+              event.currentTarget.style.height = `${Math.min(event.currentTarget.scrollHeight, 180)}px`;
+            }}
+            onKeyDown={(event) => {
+              if (
+                event.key === "Enter" &&
+                !event.shiftKey &&
+                !event.nativeEvent.isComposing &&
+                draft.trim() &&
+                !waiting &&
+                !send.isPending
+              ) {
+                event.preventDefault();
+                send.mutate(draft.trim());
+              }
+            }}
+          />
+          <div className="chat-composer-footer">
+            <span className="mono">⌘ ↵ 发送</span>
+            <button
+              className="chat-send"
+              type="button"
+              aria-label={sessionId ? "追问" : "开始"}
+              disabled={!draft.trim() || send.isPending || closed || waiting || missing}
+              onClick={() => send.mutate(draft.trim())}
+            >
+              <span aria-hidden="true">↑</span>
+            </button>
+          </div>
+          {send.error ? <p className="error">{errorText(send.error)}</p> : null}
+        </div>
+      </section>
+      {sessionId && !missing ? (
+        <ExecutionTracePanel
+          key={`${client.baseUrl}:${sessionId}`}
+          client={client}
+          sessionId={sessionId}
+          panelId="chat-execution-trace"
+          open={traceOpen}
+          live={!streamIdle}
+          width={traceWidth}
+          onClose={() => setTraceOpen(false)}
+          onCountChange={setTraceCount}
+          onWidthChange={setTraceWidth}
+        />
+      ) : null}
+    </div>
   );
 }

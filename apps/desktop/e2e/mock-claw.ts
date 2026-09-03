@@ -4,6 +4,10 @@ export type ClawTraffic = {
   paths: string[];
   identities: Array<{ tenantId: string; deptId: string; userId: string }>;
   cancels: number;
+  closes: number;
+  closeReasons: string[];
+  mcpActions: string[];
+  mcpCapabilityInputs: Array<Record<string, unknown>>;
   approvals: number;
   approvalExpectedVersions: string[];
   skillExpectedRevisions: string[];
@@ -16,6 +20,7 @@ export async function mockClaw(
     approval?: boolean;
     failedChat?: boolean;
     quarantinedCatalog?: boolean;
+    legacyMcpCapabilities?: boolean;
     skillLifecycle?: boolean;
   } = {},
 ): Promise<ClawTraffic> {
@@ -23,6 +28,10 @@ export async function mockClaw(
     paths: [],
     identities: [],
     cancels: 0,
+    closes: 0,
+    closeReasons: [],
+    mcpActions: [],
+    mcpCapabilityInputs: [],
     approvals: 0,
     approvalExpectedVersions: [],
     skillExpectedRevisions: [],
@@ -33,6 +42,7 @@ export async function mockClaw(
   let e2eTranscriptReads = 0;
   let skillStatus = "disabled";
   let skillRevision = 2;
+  const closedSessions = new Set<string>();
 
   const installation = () => ({
     publisher: "acme",
@@ -81,6 +91,24 @@ export async function mockClaw(
     });
     if (url.pathname.endsWith("/cancel")) {
       traffic.cancels += 1;
+    }
+    if (url.pathname.endsWith("/close")) {
+      const parts = url.pathname.split("/");
+      const closedSessionId = parts.at(-2) ?? "";
+      const body = route.request().postDataJSON() as { reason?: unknown } | null;
+      traffic.closes += 1;
+      traffic.closeReasons.push(typeof body?.reason === "string" ? body.reason : "");
+      closedSessions.add(closedSessionId);
+      await json(
+        {
+          session_id: closedSessionId,
+          run_id: null,
+          status: "closed",
+          run_status: "completed",
+        },
+        202,
+      );
+      return;
     }
     if (url.pathname.endsWith("/approvals/apr_e2e/responses")) {
       traffic.approvals += 1;
@@ -182,6 +210,158 @@ export async function mockClaw(
       });
       return;
     }
+    if (url.pathname === "/v1/admin/mcp-servers/lifecycle") {
+      const body = route.request().postDataJSON() as { operation?: unknown } | null;
+      const operation = typeof body?.operation === "string" ? body.operation : "";
+      traffic.mcpActions.push(operation);
+      await json(
+        {
+          operation_id: `mcp-op-${operation}`,
+          server_id: "chaintowermcp",
+          operation,
+          status: "succeeded",
+          result: { healthy: true },
+        },
+        202,
+      );
+      return;
+    }
+    if (
+      url.pathname ===
+        "/v1/admin/mcp-servers/chaintowermcp/capabilities/cap-market-quote:test" &&
+      route.request().method() === "POST"
+    ) {
+      const body = route.request().postDataJSON() as {
+        input?: Record<string, unknown>;
+        expected_output?: unknown;
+      };
+      traffic.mcpCapabilityInputs.push(body.input ?? {});
+      const output = { symbol: body.input?.symbol, price: 123.45, status: "ok" };
+      await json({
+        status: "passed",
+        kind: "tool",
+        output,
+        schema_valid: true,
+        expectation_matched: body.expected_output === undefined ? null : true,
+        duration_ms: 18,
+        error: null,
+      });
+      return;
+    }
+    if (url.pathname === "/v1/admin/mcp-servers/chaintowermcp/capabilities") {
+      if (options.legacyMcpCapabilities) {
+        await json({ message: "Sorry, Page Not Found" }, 404);
+        return;
+      }
+      await json({
+        server_id: "chaintowermcp",
+        capabilities: [
+          {
+            capability_id: "cap-market-quote",
+            kind: "tool",
+            canonical_name: "market.quote.get",
+            title: "Get market quote",
+            description: "Read the latest governed market quote.",
+            version: "1.2.0",
+            status: "active",
+            tags: ["market", "quote"],
+            permission: "read-only",
+            risk_level: "low",
+            read_only: true,
+            enabled: true,
+            input_schema: {
+              type: "object",
+              properties: { symbol: { type: "string" } },
+              required: ["symbol"],
+            },
+            output_schema: {
+              type: "object",
+              properties: { price: { type: "number" } },
+            },
+          },
+          {
+            capability_id: "cap-market-order",
+            kind: "tool",
+            canonical_name: "market.order.create",
+            title: "Create market order",
+            description: "Create an order after approval.",
+            version: "1.0.0",
+            status: "active",
+            tags: ["market", "order"],
+            permission: "write-with-approval",
+            risk_level: "high",
+            read_only: false,
+            enabled: true,
+            input_schema: { type: "object", properties: { symbol: { type: "string" } } },
+            output_schema: { type: "object" },
+          },
+          {
+            capability_id: "cap-market-resource",
+            kind: "resource",
+            canonical_name: "chaintowermcp.resource.market-snapshot",
+            title: "Market snapshot",
+            description: "Current market snapshot.",
+            version: "0.0.0",
+            status: "active",
+            tags: [],
+            permission: "read-only",
+            risk_level: "low",
+            read_only: true,
+            enabled: true,
+            uri: "market://snapshot/latest",
+            mime_type: "application/json",
+          },
+          {
+            capability_id: "cap-market-prompt",
+            kind: "prompt",
+            canonical_name: "market.brief",
+            title: "Market brief",
+            description: "Build a concise market briefing prompt.",
+            version: "0.0.0",
+            status: "active",
+            tags: [],
+            permission: "read-only",
+            risk_level: "low",
+            read_only: true,
+            enabled: true,
+            arguments: [
+              { name: "symbol", description: "Ticker symbol", required: true },
+            ],
+          },
+        ],
+      });
+      return;
+    }
+    if (url.pathname === "/v1/admin/mcp-servers/chaintowermcp/tools") {
+      await json({
+        server_id: "chaintowermcp",
+        tools: [
+          {
+            capability_id: "cap-market-quote",
+            canonical_name: "market.quote.get",
+            title: "Get market quote",
+            description: "Read the latest governed market quote.",
+            version: "1.2.0",
+            status: "active",
+            tags: ["market", "quote"],
+            permission: "read-only",
+            risk_level: "low",
+          },
+          {
+            capability_id: "cap-market-order",
+            canonical_name: "market.order.create",
+            title: "Create market order",
+            description: "Create an order after approval.",
+            version: "1.0.0",
+            status: "active",
+            tags: ["market", "order"],
+            permission: "write-with-approval",
+            risk_level: "high",
+          },
+        ],
+      });
+      return;
+    }
     if (url.pathname === "/v1/tasks" && route.request().method() === "GET") {
       await json({ tasks: [], next_cursor: null });
       return;
@@ -195,6 +375,54 @@ export async function mockClaw(
         status_url: "/v1/tasks/ses_sync",
         result_url: "/v1/tasks/ses_sync/result",
         stream_url: "/v1/streams/ses_sync",
+      });
+      return;
+    }
+    if (url.pathname === "/v1/tasks/ses_sync") {
+      await json({
+        tenant_id: "platform",
+        session_id: "ses_sync",
+        root_session_id: "ses_sync",
+        run_id: "run_sync",
+        status: closedSessions.has("ses_sync") ? "closed" : "ready",
+        run_status: "completed",
+        goal: "sync goal",
+        source: "chat",
+        schedule_id: null,
+        occurrence_id: null,
+        progress: 1,
+        current_stage: "done",
+        result_summary: "同步调用结果",
+        result_ref: null,
+        artifact_refs: [],
+        error: null,
+        projection_version: 2,
+        projected_at: "2026-08-25T04:13:04Z",
+      });
+      return;
+    }
+    if (url.pathname === "/v1/tasks/ses_sync/transcript") {
+      await json({
+        session_id: "ses_sync",
+        projection_version: 2,
+        status: closedSessions.has("ses_sync") ? "closed" : "ready",
+        run_status: "completed",
+        messages: [
+          { role: "user", content: "sync goal" },
+          { role: "assistant", content: "同步调用结果" },
+        ],
+        pending_approval: null,
+      });
+      return;
+    }
+    if (url.pathname === "/v1/tasks/ses_sync/activity") {
+      await json({
+        session_id: "ses_sync",
+        projection_version: 2,
+        source_version: 2,
+        next_after_version: 2,
+        has_more: false,
+        nodes: [activityNode(1, "run", "completed", "Run run_sync", "run_sync")],
       });
       return;
     }
@@ -288,7 +516,7 @@ export async function mockClaw(
         session_id: "ses_e2e",
         root_session_id: "ses_e2e",
         run_id: "run_e2e",
-        status: running ? "running" : "ready",
+        status: closedSessions.has("ses_e2e") ? "closed" : running ? "running" : "ready",
         run_status: running ? "running" : options.failedChat ? "failed" : "completed",
         goal: "介绍 AuraClaw",
         source: "chat",

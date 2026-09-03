@@ -6,7 +6,10 @@ const TASK_DRAFT_KEY = "aurax.ui.taskDraft";
 const TASK_DRAFT_PREFIX = "aurax.ui.taskDraft.";
 const LAST_EVENT_PREFIX = "aurax.ui.lastEventId.";
 const TRACE_OPEN_KEY = "aurax.ui.executionTraceOpen";
+const CHAT_TRACE_OPEN_KEY = "aurax.ui.chatExecutionTraceOpen";
+const TASK_TRACE_OPEN_KEY = "aurax.ui.taskExecutionTraceOpen";
 const TRACE_FILTER_KEY = "aurax.ui.executionTraceFilter";
+const TRACE_WIDTH_KEY = "aurax.ui.executionTraceWidth";
 const SESSION_ORIGIN_PREFIX = "aurax.ui.sessionOrigin.";
 const STREAMING_PREFIX = "aurax.ui.streaming.";
 
@@ -18,6 +21,10 @@ export type StreamingBuffer = {
 
 export type TraceFilter = "all" | "model" | "capability" | "state";
 export type SessionOrigin = "chat" | "task";
+
+export const DEFAULT_TRACE_WIDTH = 360;
+export const MIN_TRACE_WIDTH = 300;
+export const MAX_TRACE_WIDTH = 640;
 
 export function loadLastChatSessionId(): string | null {
   const value = window.localStorage.getItem(LAST_CHAT_SESSION_KEY);
@@ -108,12 +115,22 @@ export function saveLastEventId(sessionId: string, eventId: string): void {
   window.localStorage.setItem(`${LAST_EVENT_PREFIX}${sessionId}`, eventId);
 }
 
-export function loadTraceOpen(): boolean {
-  return window.localStorage.getItem(TRACE_OPEN_KEY) === "true";
+export function loadTraceOpen(view: "chat" | "task" = "task"): boolean {
+  const key = view === "chat" ? CHAT_TRACE_OPEN_KEY : TASK_TRACE_OPEN_KEY;
+  const value = window.localStorage.getItem(key);
+  if (value !== null) {
+    return value === "true";
+  }
+  const legacy = window.localStorage.getItem(TRACE_OPEN_KEY);
+  if (legacy !== null) {
+    return legacy === "true";
+  }
+  return true;
 }
 
-export function saveTraceOpen(open: boolean): void {
-  window.localStorage.setItem(TRACE_OPEN_KEY, String(open));
+export function saveTraceOpen(open: boolean, view: "chat" | "task" = "task"): void {
+  const key = view === "chat" ? CHAT_TRACE_OPEN_KEY : TASK_TRACE_OPEN_KEY;
+  window.localStorage.setItem(key, String(open));
 }
 
 export function loadTraceFilter(): TraceFilter {
@@ -125,6 +142,25 @@ export function loadTraceFilter(): TraceFilter {
 
 export function saveTraceFilter(filter: TraceFilter): void {
   window.localStorage.setItem(TRACE_FILTER_KEY, filter);
+}
+
+export function clampTraceWidth(width: number): number {
+  return Math.min(MAX_TRACE_WIDTH, Math.max(MIN_TRACE_WIDTH, Math.round(width)));
+}
+
+export function loadTraceWidth(): number {
+  const width = Number(window.localStorage.getItem(TRACE_WIDTH_KEY));
+  // Migrate the original auto-saved default to the denser workspace ratio.
+  if (width === 380) {
+    return DEFAULT_TRACE_WIDTH;
+  }
+  return Number.isFinite(width) && width > 0
+    ? clampTraceWidth(width)
+    : DEFAULT_TRACE_WIDTH;
+}
+
+export function saveTraceWidth(width: number): void {
+  window.localStorage.setItem(TRACE_WIDTH_KEY, String(clampTraceWidth(width)));
 }
 
 export function saveSessionOrigin(sessionId: string, origin: SessionOrigin): void {

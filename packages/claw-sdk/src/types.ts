@@ -187,19 +187,60 @@ export type McpServerRecord = {
   } | null;
 };
 
-export type McpTool = {
+export type McpCapabilityKind = "tool" | "resource" | "resource_template" | "prompt";
+
+export type McpPromptArgument = {
+  name: string;
+  title?: string | null;
+  description?: string | null;
+  required?: boolean;
+};
+
+export type McpCapability = {
   capability_id: string;
+  kind: McpCapabilityKind;
   canonical_name: string;
   title: string;
   description: string;
   version: string;
   status: string;
   tags: string[];
+  classification?: string;
+  permission?: string | null;
+  risk_level?: string | null;
+  server_id?: string;
+  read_only?: boolean;
+  enabled?: boolean;
+  input_schema?: Record<string, unknown>;
+  output_schema?: Record<string, unknown>;
+  uri?: string;
+  uri_template?: string;
+  mime_type?: string;
+  size?: number;
+  arguments?: McpPromptArgument[];
 };
+
+export type McpTool = Omit<McpCapability, "kind"> & { kind?: "tool" };
 
 export type McpToolList = {
   server_id: string;
   tools: McpTool[];
+};
+
+export type McpCapabilityList = {
+  server_id: string;
+  capabilities: McpCapability[];
+  legacy_tools_fallback?: boolean;
+};
+
+export type McpCapabilityTestResult = {
+  status: "passed" | "failed";
+  kind: McpCapabilityKind;
+  output: unknown;
+  schema_valid: boolean | null;
+  expectation_matched: boolean | null;
+  duration_ms: number;
+  error?: string | null;
 };
 
 export type McpLifecycleAction =

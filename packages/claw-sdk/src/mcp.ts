@@ -2,6 +2,9 @@ import type { ClawClient } from "./client.js";
 import { ClawApiError, newIdempotencyKey } from "./errors.js";
 import type {
   McpLifecycleAction,
+  McpCapability,
+  McpCapabilityList,
+  McpCapabilityTestResult,
   McpOperationRecord,
   McpServerRecord,
   McpToolList,
@@ -11,12 +14,87 @@ export function listMcpServers(client: ClawClient) {
   return client.request<{ servers: McpServerRecord[] }>("GET", "/v1/admin/mcp-servers");
 }
 
+export function mcpCatalogStatusLabel(status: string | null | undefined): string {
+  const labels: Record<string, string> = {
+    active: "可用", degraded: "同步异常", quarantined: "已隔离", retired: "已下线",
+  };
+  return labels[status ?? ""] ?? "状态未知";
+}
+
+export function mcpCatalogErrorMessage(code: string): string {
+  const messages: Record<string, string> = {
+    ValueError: "能力目录校验失败，请查看同步诊断；不一定是历史数据问题。",
+    CapabilityDescriptorDepthError: "能力 Schema 嵌套过深，超过目录安全限制。",
+    CapabilityDescriptorSizeError: "能力描述过大，超过目录安全限制。",
+    CapabilitySchemaDriftError: "能力定义已变更但版本未更新，请升级 MCP 能力版本后重新同步。",
+    CapabilityAllowlistError: "发现的能力均不符合允许前缀，请检查服务器的能力白名单。",
+    TimeoutError: "能力目录同步超时，请检查 MCP 服务和网络后重试。",
+    PolicyDeniedError: "安全策略拒绝了目录访问，请检查权限和网络策略。",
+    transport_unavailable: "MCP 连接不可用，请检查服务器是否已启用。",
+  };
+  return messages[code] ?? "能力目录同步失败，请检查 MCP 服务与同步诊断后重试。";
+}
+
 export function getMcpServer(client: ClawClient, serverId: string) {
   return client.request<McpServerRecord>("GET", `/v1/admin/mcp-servers/${serverId}`);
 }
 
 export function listMcpTools(client: ClawClient, serverId: string) {
   return client.request<McpToolList>("GET", `/v1/admin/mcp-servers/${serverId}/tools`);
+}
+
+export async function listMcpCapabilities(client: ClawClient, serverId: string) {
+  try {
+    return await client.request<McpCapabilityList>(
+      "GET",
+      `/v1/admin/mcp-servers/${serverId}/capabilities`,
+    );
+  } catch (error) {
+    if (!(error instanceof ClawApiError) || error.status !== 404) {
+      throw error;
+    }
+    const legacy = await listMcpTools(client, serverId);
+    const capabilities: McpCapability[] = legacy.body.tools.map((tool) => ({
+      ...tool,
+      capability_id: tool.capability_id || `legacy-tool:${serverId}:${tool.canonical_name}`,
+      kind: "tool",
+      title: tool.title || tool.canonical_name,
+      description: tool.description || "",
+      version: tool.version || "0.0.0",
+      status: tool.status || "active",
+      tags: tool.tags ?? [],
+      read_only: tool.read_only ?? tool.permission === "read-only",
+      enabled: tool.enabled ?? tool.status === "active",
+    }));
+    return {
+      status: legacy.status,
+      headers: legacy.headers,
+      body: {
+        server_id: legacy.body.server_id,
+        capabilities,
+        legacy_tools_fallback: true,
+      },
+    };
+  }
+}
+
+export function testMcpCapability(
+  client: ClawClient,
+  serverId: string,
+  capabilityId: string,
+  input: Record<string, unknown>,
+  expectedOutput?: unknown,
+) {
+  return client.request<McpCapabilityTestResult>(
+    "POST",
+    `/v1/admin/mcp-servers/${encodeURIComponent(serverId)}/capabilities/${encodeURIComponent(capabilityId)}:test`,
+    {
+      json: {
+        input,
+        ...(expectedOutput === undefined ? {} : { expected_output: expectedOutput }),
+      },
+    },
+  );
 }
 
 export type McpNetworkMode = "public" | "private" | "loopback";

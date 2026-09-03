@@ -2,7 +2,15 @@ import { listSkills, toggleSkill, type ClawClient, type SkillSummary } from "@au
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { errorText } from "../lib/errors";
 
-export function SkillSelector({ client, locked }: { client: ClawClient; locked: boolean }) {
+export function SkillSelector({
+  client,
+  locked,
+  compact = false,
+}: {
+  client: ClawClient;
+  locked: boolean;
+  compact?: boolean;
+}) {
   const queryClient = useQueryClient();
   const skills = useQuery({
     queryKey: ["skills", client.baseUrl],
@@ -32,11 +40,15 @@ export function SkillSelector({ client, locked }: { client: ClawClient; locked: 
   );
 
   return (
-    <div className="skill-picker">
-      <p className="skill-picker-label">允许使用的 Skill</p>
-      <p className="mono">
-        勾选改的是租户目录，下一轮 Run 由 AuraClaw Resolver 解析；进行中的 Run 不受影响。
-      </p>
+    <div className={`skill-picker ${compact ? "compact" : ""}`}>
+      <div className="skill-picker-copy">
+        <p className="skill-picker-label">允许使用的 Skill</p>
+        <p className="mono">
+          {compact
+            ? "设置在下一轮 Run 生效"
+            : "勾选改的是租户目录，下一轮 Run 由 AuraClaw Resolver 解析；进行中的 Run 不受影响。"}
+        </p>
+      </div>
       {skills.error ? <p className="error">{errorText(skills.error)}</p> : null}
       <div className="chip-row">
         {selectableSkills.map((skill) => {

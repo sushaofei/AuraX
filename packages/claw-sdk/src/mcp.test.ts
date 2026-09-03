@@ -5,10 +5,14 @@ import {
   createMcpServer,
   inferMcpNetworkMode,
   listMcpTools,
+  listMcpCapabilities,
   mcpLifecycle,
+  mcpCatalogStatusLabel,
+  mcpCatalogErrorMessage,
   retireMcpServer,
   deleteMcpServer,
   saveMcpServer,
+  testMcpCapability,
   updateMcpServer,
 } from "./mcp.js";
 
@@ -18,6 +22,18 @@ function jsonResponse(body: unknown, status = 202): Response {
     headers: { "Content-Type": "application/json" },
   });
 }
+
+describe("MCP 中文目录诊断", () => {
+  it("translates statuses and distinguishes depth from version drift", () => {
+    expect(mcpCatalogStatusLabel("quarantined")).toBe("已隔离");
+    expect(mcpCatalogStatusLabel("active")).toBe("可用");
+    expect(mcpCatalogStatusLabel(null)).toBe("状态未知");
+    expect(mcpCatalogErrorMessage("CapabilityDescriptorDepthError")).toContain("嵌套过深");
+    expect(mcpCatalogErrorMessage("CapabilitySchemaDriftError")).toContain("版本未更新");
+    expect(mcpCatalogErrorMessage("ValueError")).toContain("不一定是历史数据问题");
+    expect(mcpCatalogErrorMessage("UnknownError")).toContain("同步失败");
+  });
+});
 
 describe("inferMcpNetworkMode", () => {
   it("uses loopback for Credential Proxy localhost aliases", () => {
@@ -332,6 +348,130 @@ describe("listMcpTools", () => {
     const response = await listMcpTools(client, "auramcp");
     expect(capturedUrl).toBe("http://claw.example/v1/admin/mcp-servers/auramcp/tools");
     expect(response.body.tools[0]?.canonical_name).toBe("auramcp.health.ping");
+  });
+});
+
+describe("listMcpCapabilities", () => {
+  it("reads the grouped capability catalog path for a registered server", async () => {
+    let capturedUrl: string | undefined;
+    const client = new ClawClient({
+      baseUrl: "http://claw.example",
+      fetch: (async (input) => {
+        capturedUrl = String(input);
+        return jsonResponse(
+          {
+            server_id: "auramcp",
+            capabilities: [
+              {
+                capability_id: "cap_ping",
+                kind: "tool",
+                canonical_name: "auramcp.health.ping",
+                title: "ping",
+                description: "",
+                version: "1.0.0",
+                status: "active",
+                tags: [],
+                read_only: true,
+                enabled: true,
+                input_schema: { type: "object" },
+                output_schema: { type: "object" },
+              },
+            ],
+          },
+          200,
+        );
+      }) as typeof fetch,
+    });
+    const response = await listMcpCapabilities(client, "auramcp");
+    expect(capturedUrl).toBe(
+      "http://claw.example/v1/admin/mcp-servers/auramcp/capabilities",
+    );
+    expect(response.body.capabilities[0]?.kind).toBe("tool");
+  });
+
+  it("falls back to the legacy tools endpoint when AuraClaw has not been upgraded", async () => {
+    const capturedUrls: string[] = [];
+    const client = new ClawClient({
+      baseUrl: "http://claw.example",
+      fetch: (async (input) => {
+        const url = String(input);
+        capturedUrls.push(url);
+        if (url.endsWith("/capabilities")) {
+          return jsonResponse({ message: "Sorry, Page Not Found" }, 404);
+        }
+        return jsonResponse(
+          {
+            server_id: "legacy-mcp",
+            tools: [
+              {
+                capability_id: "cap_legacy",
+                canonical_name: "legacy.health.ping",
+                title: "Health ping",
+                description: "",
+                version: "1.0.0",
+                status: "active",
+                tags: [],
+                permission: "read-only",
+              },
+            ],
+          },
+          200,
+        );
+      }) as typeof fetch,
+    });
+
+    const response = await listMcpCapabilities(client, "legacy-mcp");
+
+    expect(capturedUrls).toEqual([
+      "http://claw.example/v1/admin/mcp-servers/legacy-mcp/capabilities",
+      "http://claw.example/v1/admin/mcp-servers/legacy-mcp/tools",
+    ]);
+    expect(response.body.legacy_tools_fallback).toBe(true);
+    expect(response.body.capabilities[0]).toMatchObject({
+      kind: "tool",
+      canonical_name: "legacy.health.ping",
+      read_only: true,
+      enabled: true,
+    });
+  });
+});
+
+describe("testMcpCapability", () => {
+  it("posts simulated input and expected output to the capability test endpoint", async () => {
+    let capturedUrl: string | undefined;
+    let capturedBody: unknown;
+    const client = new ClawClient({
+      baseUrl: "http://claw.example",
+      fetch: (async (input, init) => {
+        capturedUrl = String(input);
+        capturedBody = JSON.parse(String(init?.body));
+        return jsonResponse({
+          status: "passed",
+          kind: "tool",
+          output: { status: "ok" },
+          schema_valid: true,
+          expectation_matched: true,
+          duration_ms: 12,
+        }, 200);
+      }) as typeof fetch,
+    });
+
+    const response = await testMcpCapability(
+      client,
+      "market/mcp",
+      "cap quote",
+      { symbol: "AAPL" },
+      { status: "ok" },
+    );
+
+    expect(capturedUrl).toBe(
+      "http://claw.example/v1/admin/mcp-servers/market%2Fmcp/capabilities/cap%20quote:test",
+    );
+    expect(capturedBody).toEqual({
+      input: { symbol: "AAPL" },
+      expected_output: { status: "ok" },
+    });
+    expect(response.body.schema_valid).toBe(true);
   });
 });
 

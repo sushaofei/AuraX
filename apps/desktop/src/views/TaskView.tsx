@@ -4,7 +4,6 @@ import {
   closeSession,
   createTask,
   followTaskStream,
-  followUp,
   getResult,
   getTask,
   getTranscript,
@@ -16,15 +15,17 @@ import {
   type TaskResult,
   type TranscriptMessage,
 } from "@aurax/claw-sdk";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
 import {
   loadLastEventId,
   loadTaskDraft,
   loadTraceOpen,
+  loadTraceWidth,
   saveLastEventId,
   saveSessionOrigin,
   saveTaskDraft,
   saveTraceOpen,
+  saveTraceWidth,
 } from "../cache";
 import { ExecutionTracePanel } from "../components/ExecutionTracePanel";
 import { MarkdownBody } from "../components/MarkdownBody";
@@ -52,8 +53,10 @@ export function TaskView({
   const [invokeStatus, setInvokeStatus] = useState<number | null>(null);
   const [streamNote, setStreamNote] = useState("");
   const [logOpen, setLogOpen] = useState(false);
-  const [traceOpen, setTraceOpen] = useState(loadTraceOpen);
+  const [traceOpen, setTraceOpen] = useState(() => loadTraceOpen("task"));
   const [traceCount, setTraceCount] = useState(0);
+  const [traceWidth, setTraceWidth] = useState(loadTraceWidth);
+  const autoCloseSessionRef = useRef<string | null>(null);
 
   /* eslint-disable react-hooks/set-state-in-effect -- session transitions restore persisted per-session draft state */
   useEffect(() => {
@@ -66,8 +69,18 @@ export function TaskView({
   }, [draft, sessionId]);
 
   useEffect(() => {
-    saveTraceOpen(traceOpen);
+    saveTraceOpen(traceOpen, "task");
   }, [traceOpen]);
+
+  useEffect(() => {
+    saveTraceWidth(traceWidth);
+  }, [traceWidth]);
+
+  useEffect(() => {
+    if (!sessionId) {
+      autoCloseSessionRef.current = null;
+    }
+  }, [sessionId]);
 
   const task = useQuery({
     queryKey: ["task", client.baseUrl, sessionId],
@@ -140,39 +153,28 @@ export function TaskView({
 
   const trigger = useMutation({
     mutationFn: async (text: string) => {
-      if (!sessionId) {
-        if (triggerMode === "sync") {
-          const invoked = await syncInvokeTask(client, { goal: text, timeoutSeconds: 120 });
-          setInvokeResult(invoked.body);
-          setInvokeStatus(invoked.status);
-          saveSessionOrigin(invoked.body.session_id, "task");
-          onSession(invoked.body.session_id);
-          return invoked.body;
-        }
-        const created = await createTask(client, { goal: text, source: "chat" });
-        setAccepted(created.body);
-        saveSessionOrigin(created.body.session_id, "task");
-        onSession(created.body.session_id);
-        const waited = await getResult(client, created.body.session_id, {
-          wait: true,
-          timeoutSeconds: 120,
-        });
-        setInvokeResult(waited.body);
-        setInvokeStatus(waited.status);
-        return waited.body;
+      if (sessionId) {
+        throw new Error("任务只允许提交一次；如需执行新目标，请新建任务");
       }
-      const current = (await getTask(client, sessionId)).body;
-      if (current.status === "waiting_for_human") {
-        throw new Error("当前等待人审，不能当普通追问发送");
+      if (triggerMode === "sync") {
+        const invoked = await syncInvokeTask(client, { goal: text, timeoutSeconds: 120 });
+        setInvokeResult(invoked.body);
+        setInvokeStatus(invoked.status);
+        saveSessionOrigin(invoked.body.session_id, "task");
+        onSession(invoked.body.session_id);
+        return invoked.body;
       }
-      if (current.status === "closed") {
-        throw new Error("Session 已结束，请新开一轮");
-      }
-      const expectedVersion = Math.max(
-        current.projection_version,
-        transcript.data?.projection_version ?? 0,
-      );
-      return (await followUp(client, sessionId, text, expectedVersion, current.status)).body;
+      const created = await createTask(client, { goal: text, source: "chat" });
+      setAccepted(created.body);
+      saveSessionOrigin(created.body.session_id, "task");
+      onSession(created.body.session_id);
+      const waited = await getResult(client, created.body.session_id, {
+        wait: true,
+        timeoutSeconds: 120,
+      });
+      setInvokeResult(waited.body);
+      setInvokeStatus(waited.status);
+      return waited.body;
     },
     onSuccess: () => {
       setDraft("");
@@ -203,16 +205,30 @@ export function TaskView({
     onSuccess: () => queryClient.invalidateQueries(),
   });
 
-  const close = useMutation({
-    mutationFn: async () => {
+  const close = useMutation<void, Error, string>({
+    mutationFn: async (reason) => {
       if (!sessionId) {
         return;
       }
       const current = (await getTask(client, sessionId)).body;
-      await closeSession(client, sessionId, current.projection_version);
+      await closeSession(client, sessionId, current.projection_version, reason);
     },
     onSuccess: () => queryClient.invalidateQueries(),
   });
+
+  useEffect(() => {
+    if (
+      !sessionId ||
+      !runStatus ||
+      !TERMINAL_RUN.has(runStatus) ||
+      sessionStatus === "closed" ||
+      autoCloseSessionRef.current === sessionId
+    ) {
+      return;
+    }
+    autoCloseSessionRef.current = sessionId;
+    close.mutate("task run reached terminal state");
+  }, [close, runStatus, sessionId, sessionStatus]);
 
   const approve = useMutation({
     mutationFn: async ({
@@ -245,6 +261,7 @@ export function TaskView({
   const closed = task.data?.status === "closed";
   const canResume = Boolean(task.data && RESUMABLE.has(task.data.status) && !waiting);
   const missing = isNotFound(task.error);
+  const traceVisible = Boolean(sessionId && !missing && traceOpen);
 
   const displayResult = invokeResult ?? (task.data?.result_summary ? {
     session_id: task.data.session_id,
@@ -254,21 +271,29 @@ export function TaskView({
   } : null);
 
   return (
-    <div className={`chat-workspace ${traceOpen ? "trace-open" : "trace-closed"}`}>
-      <section className="bench">
-        <p className="kicker">API bench</p>
-        <div className="page-head">
-          <h1>任务</h1>
+    <div
+      className={`chat-workspace ${traceVisible ? "trace-open" : "trace-closed"}`}
+      style={{ "--trace-panel-width": `${traceWidth}px` } as CSSProperties}
+    >
+      <section className="bench task-stream">
+        <header className="chat-toolbar task-toolbar">
+          <div>
+            <p className="kicker">API task</p>
+            <h1>任务</h1>
+            <p className="chat-runtime-note">一次性目标执行 · result 作为权威结果</p>
+          </div>
           <div className="row">
             <button
               className="btn ghost"
               type="button"
-              aria-expanded={Boolean(sessionId && !missing && traceOpen)}
-              aria-controls="execution-trace"
+              aria-expanded={traceVisible}
+              aria-controls="task-execution-trace"
+              aria-label={traceVisible ? "收起执行轨迹" : "显示执行轨迹"}
+              title={traceVisible ? "收起执行轨迹" : "显示执行轨迹"}
               disabled={!sessionId || missing}
               onClick={() => setTraceOpen((open) => !open)}
             >
-              {traceOpen ? "收起轨迹" : "执行轨迹"}
+              轨迹
               {traceCount > 0 ? ` · ${traceCount}` : ""}
             </button>
             <button
@@ -281,7 +306,7 @@ export function TaskView({
                 setInvokeStatus(null);
               }}
             >
-              新开一轮
+              新建任务
             </button>
             {canResume ? (
               <button
@@ -294,106 +319,122 @@ export function TaskView({
               </button>
             ) : null}
             {sessionId && !closed && !missing ? (
+              <>
+                <button
+                  className="btn ghost"
+                  type="button"
+                  disabled={cancel.isPending}
+                  onClick={() => cancel.mutate()}
+                >
+                  取消
+                </button>
+                <button
+                  className="btn ghost"
+                  type="button"
+                  disabled={close.isPending}
+                  onClick={() => close.mutate("closed by user")}
+                  title="结束 Session"
+                >
+                  结束
+                </button>
+              </>
+            ) : null}
+          </div>
+        </header>
+
+        <div className="chat-scroll task-scroll">
+          {missing ? (
+            <div className="chat-notice error">
+              缓存的 Session 已不存在。
               <button
                 className="btn ghost"
                 type="button"
-                disabled={close.isPending}
-                onClick={() => close.mutate()}
+                onClick={() => {
+                  onSession(null);
+                  setAccepted(null);
+                  setInvokeResult(null);
+                }}
               >
-                结束 Session
+                新建任务
               </button>
-            ) : null}
-          </div>
-        </div>
-        <p className="lede">
-          通过 REST 触发 AuraClaw 任务，以 result 回调（GET /result?wait=true 或 /tasks/sync）为权威结果。关闭窗口不会取消任务。
-        </p>
-        {missing ? (
-          <p className="error">
-            缓存的 Session 已不存在。
-            <button
-              className="btn ghost"
-              type="button"
-              onClick={() => {
-                onSession(null);
-                setAccepted(null);
-                setInvokeResult(null);
-              }}
-            >
-              开始新任务
-            </button>
-          </p>
-        ) : null}
-        {sessionId && !missing ? (
-          <p className="session-meta mono">
-            {sessionId} · {task.data?.status ?? "…"} / {task.data?.run_status ?? "…"}
-            {streamNote ? ` · ${streamNote}` : ""}
-          </p>
-        ) : null}
-        {!sessionId ? (
-          <p className="empty">还没有 Session。选择触发方式，输入 goal 后提交。</p>
-        ) : null}
-        <div className="chip-row filters" role="tablist" aria-label="触发方式">
-          <button
-            type="button"
-            className="skill-chip"
-            role="tab"
-            aria-selected={triggerMode === "async"}
-            aria-pressed={triggerMode === "async"}
-            disabled={Boolean(sessionId)}
-            onClick={() => setTriggerMode("async")}
-          >
-            异步 202 + wait
-          </button>
-          <button
-            type="button"
-            className="skill-chip"
-            role="tab"
-            aria-selected={triggerMode === "sync"}
-            aria-pressed={triggerMode === "sync"}
-            disabled={Boolean(sessionId)}
-            onClick={() => setTriggerMode("sync")}
-          >
-            同步 /tasks/sync
-          </button>
-        </div>
-        {accepted ? (
-          <div className="card api-card">
-            <strong>202 Accepted</strong>
-            <p className="mono">POST /v1/tasks</p>
-            <p className="mono">status_url: {accepted.status_url}</p>
-            <p className="mono">result_url: {accepted.result_url}</p>
-            <p className="mono">stream_url: {accepted.stream_url}</p>
-          </div>
-        ) : null}
-        <SkillSelector client={client} locked={closed || waiting} />
-        {displayResult ? (
-          <div className="card result-card">
-            <strong>
-              权威结果
-              {invokeStatus ? ` · HTTP ${invokeStatus}` : ""}
-              {displayResult.wait_outcome ? ` · ${displayResult.wait_outcome}` : ""}
-            </strong>
-            {displayResult.result_summary ? (
-              <MarkdownBody text={displayResult.result_summary} />
-            ) : (
-              <pre className="mono result-json">
-                {JSON.stringify(displayResult, null, 2)}
-              </pre>
-            )}
-          </div>
-        ) : null}
-        {sessionId && messages.length > 0 ? (
-          <div className="card">
-            <button
-              className="btn ghost"
-              type="button"
-              aria-expanded={logOpen}
-              onClick={() => setLogOpen((open) => !open)}
-            >
-              {logOpen ? "收起消息日志" : "展开消息日志"} · {messages.length} 条
-            </button>
-            {logOpen ? (
+            </div>
+          ) : null}
+          {sessionId && !missing ? (
+            <p className="chat-status-line session-meta mono">
+              {sessionId} · {task.data?.status ?? "…"} / {task.data?.run_status ?? "…"}
+              {streamNote ? ` · ${streamNote}` : ""}
+            </p>
+          ) : null}
+          {!sessionId ? (
+            <section className="task-setup" aria-labelledby="task-mode-title">
+              <div className="task-setup-heading">
+                <div>
+                  <p className="kicker">Submission</p>
+                  <h2 id="task-mode-title">选择执行方式</h2>
+                </div>
+                <p>任务只接受一个目标，提交后不可追问。</p>
+              </div>
+              <div className="chip-row filters" role="tablist" aria-label="触发方式">
+                <button
+                  type="button"
+                  className="skill-chip"
+                  role="tab"
+                  aria-selected={triggerMode === "async"}
+                  aria-pressed={triggerMode === "async"}
+                  onClick={() => setTriggerMode("async")}
+                >
+                  异步 202 + wait
+                </button>
+                <button
+                  type="button"
+                  className="skill-chip"
+                  role="tab"
+                  aria-selected={triggerMode === "sync"}
+                  aria-pressed={triggerMode === "sync"}
+                  onClick={() => setTriggerMode("sync")}
+                >
+                  同步 /tasks/sync
+                </button>
+              </div>
+              <SkillSelector client={client} locked={false} compact />
+            </section>
+          ) : null}
+          {accepted ? (
+            <details className="task-request-details">
+              <summary>202 Accepted · 查看接口地址</summary>
+              <div className="api-card">
+                <p className="mono">POST /v1/tasks</p>
+                <p className="mono">status_url: {accepted.status_url}</p>
+                <p className="mono">result_url: {accepted.result_url}</p>
+                <p className="mono">stream_url: {accepted.stream_url}</p>
+              </div>
+            </details>
+          ) : null}
+          {displayResult ? (
+            <article className="task-result result-card">
+              <header>
+                <strong>权威结果</strong>
+                <span className="mono">
+                  {displayResult.session_id}
+                  {invokeStatus ? ` · HTTP ${invokeStatus}` : ""}
+                  {displayResult.wait_outcome ? ` · ${displayResult.wait_outcome}` : ""}
+                </span>
+              </header>
+              {displayResult.result_summary ? (
+                <MarkdownBody text={displayResult.result_summary} />
+              ) : (
+                <pre className="mono result-json">{JSON.stringify(displayResult, null, 2)}</pre>
+              )}
+            </article>
+          ) : null}
+          {sessionId && messages.length > 0 ? (
+            <details className="task-request-details" open={logOpen}>
+              <summary onClick={(event) => {
+                event.preventDefault();
+                setLogOpen((open) => !open);
+              }}>
+                消息日志 · {messages.length} 条
+              </summary>
               <div className="transcript compact">
                 {messages.map((message, index) => (
                   <div
@@ -401,121 +442,95 @@ export function TaskView({
                     className={`bubble ${message.role === "user" ? "user" : "assistant"}`}
                   >
                     <span className="mono">{message.role}</span>
-                    {message.role === "assistant" ? (
-                      <MarkdownBody text={message.content} />
-                    ) : (
-                      message.content
-                    )}
+                    {message.role === "assistant" ? <MarkdownBody text={message.content} /> : message.content}
                   </div>
                 ))}
               </div>
-            ) : null}
-          </div>
-        ) : null}
-        {transcript.data?.pending_approval ? (
-          <div className="card">
-            <strong>待人审</strong>
-            <p>{transcript.data.pending_approval.reason}</p>
-            <p className="mono">{transcript.data.pending_approval.tool_name}</p>
-            {approve.isSuccess &&
-            approve.variables?.approvalId === transcript.data.pending_approval.approval_id ? (
-              <p className="mono">审批已提交，等待 Runtime 恢复…</p>
-            ) : null}
-            <div className="row">
-              <button
-                className="btn amber"
-                type="button"
-                disabled={approve.isPending}
-                onClick={() =>
-                  approve.mutate({
-                    approvalId: transcript.data.pending_approval!.approval_id,
-                    decision: "approved",
-                  })
-                }
-              >
-                {approve.isPending && approve.variables?.decision === "approved"
-                  ? "提交中…"
-                  : "批准"}
-              </button>
-              <button
-                className="btn danger"
-                type="button"
-                disabled={approve.isPending}
-                onClick={() =>
-                  approve.mutate({
-                    approvalId: transcript.data.pending_approval!.approval_id,
-                    decision: "rejected",
-                  })
-                }
-              >
-                {approve.isPending && approve.variables?.decision === "rejected"
-                  ? "提交中…"
-                  : "拒绝"}
-              </button>
+            </details>
+          ) : null}
+          {transcript.data?.pending_approval ? (
+            <div className="card chat-approval">
+              <strong>待人审</strong>
+              <p>{transcript.data.pending_approval.reason}</p>
+              <p className="mono">{transcript.data.pending_approval.tool_name}</p>
+              {approve.isSuccess &&
+              approve.variables?.approvalId === transcript.data.pending_approval.approval_id ? (
+                <p className="mono">审批已提交，等待 Runtime 恢复…</p>
+              ) : null}
+              <div className="row">
+                <button className="btn amber" type="button" disabled={approve.isPending} onClick={() => approve.mutate({ approvalId: transcript.data.pending_approval!.approval_id, decision: "approved" })}>
+                  {approve.isPending && approve.variables?.decision === "approved" ? "提交中…" : "批准"}
+                </button>
+                <button className="btn danger" type="button" disabled={approve.isPending} onClick={() => approve.mutate({ approvalId: transcript.data.pending_approval!.approval_id, decision: "rejected" })}>
+                  {approve.isPending && approve.variables?.decision === "rejected" ? "提交中…" : "拒绝"}
+                </button>
+              </div>
+              {approve.error ? <p className="error">审批提交失败：{errorText(approve.error)}</p> : null}
             </div>
-            {approve.error ? (
-              <p className="error">审批提交失败：{errorText(approve.error)}</p>
-            ) : null}
-          </div>
-        ) : null}
-        <div className="composer stack">
+          ) : null}
+          {sessionId ? (
+            <div className="task-single-run-note" role="note">
+              <strong>一次性任务</strong>
+              <p>
+                {sessionStatus === "closed"
+                  ? "本轮已到达终态，Session 已自动结束。如需执行新的目标，请点击“新建任务”。"
+                  : runStatus && TERMINAL_RUN.has(runStatus)
+                    ? "本轮已到达终态，正在自动结束 Session…"
+                    : "这个任务已经提交，不能继续追问；Run 到达终态后将自动结束 Session。"}
+              </p>
+            </div>
+          ) : null}
+        </div>
+
+        {!sessionId ? (
+        <div className="composer chat-composer task-composer">
           <textarea
             value={draft}
+            aria-label="任务目标"
             placeholder={
-              closed
-                ? "Session 已结束，请新开一轮"
-                : triggerMode === "sync"
-                  ? "POST /v1/tasks/sync goal"
-                  : "POST /v1/tasks goal"
+              triggerMode === "sync" ? "POST /v1/tasks/sync goal" : "POST /v1/tasks goal"
             }
-            disabled={closed || missing || Boolean(sessionId && triggerMode === "sync")}
             onChange={(event) => setDraft(event.target.value)}
             onKeyDown={(event) => {
-              if (event.key === "Enter" && (event.metaKey || event.ctrlKey) && draft.trim()) {
+              if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing && draft.trim() && !trigger.isPending) {
+                event.preventDefault();
                 trigger.mutate(draft.trim());
               }
             }}
           />
-          <div className="row">
+          <div className="chat-composer-footer">
+            <span className="mono">
+              {triggerMode === "sync" ? "同步等待结果" : "异步提交并等待结果"} · Enter 发送
+            </span>
             <button
-              className="btn"
+              className="chat-send"
               type="button"
-              disabled={
-                !draft.trim() ||
-                trigger.isPending ||
-                closed ||
-                waiting ||
-                missing ||
-                Boolean(sessionId && triggerMode === "sync")
-              }
+              aria-label={triggerMode === "sync" ? "同步调用" : "异步触发"}
+              disabled={!draft.trim() || trigger.isPending}
               onClick={() => trigger.mutate(draft.trim())}
             >
-              {sessionId ? "追问" : triggerMode === "sync" ? "同步调用" : "异步触发"}
-            </button>
-            <button
-              className="btn ghost"
-              type="button"
-              disabled={!sessionId || cancel.isPending || closed || missing}
-              onClick={() => cancel.mutate()}
-            >
-              取消当前 Run
+              <span aria-hidden="true">↑</span>
             </button>
           </div>
           {trigger.error ? <p className="error">{errorText(trigger.error)}</p> : null}
-          {resume.error ? <p className="error">{errorText(resume.error)}</p> : null}
-          {close.error ? <p className="error">{errorText(close.error)}</p> : null}
-          {cancel.error ? <p className="error">{errorText(cancel.error)}</p> : null}
         </div>
+        ) : null}
+        {resume.error ? <p className="error task-action-error">{errorText(resume.error)}</p> : null}
+        {close.error ? <p className="error task-action-error">{errorText(close.error)}</p> : null}
+        {cancel.error ? <p className="error task-action-error">{errorText(cancel.error)}</p> : null}
       </section>
       {sessionId && !missing ? (
         <ExecutionTracePanel
           key={`${client.baseUrl}:${sessionId}`}
           client={client}
           sessionId={sessionId}
+          panelId="task-execution-trace"
           open={traceOpen}
           live={!streamIdle}
+          width={traceWidth}
           onClose={() => setTraceOpen(false)}
           onCountChange={setTraceCount}
+          onWidthChange={setTraceWidth}
         />
       ) : null}
     </div>
