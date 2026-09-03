@@ -1,0 +1,14 @@
+.approval-selector { position: relative; min-width: 0; }
+.approval-mode-trigger { display: flex; align-items: center; gap: 6px; border: 0; background: transparent; color: inherit; padding: 6px 8px; border-radius: 8px; font: inherit; font-size: 12px; cursor: pointer; }
+.approval-mode-trigger:disabled { opacity: .55; cursor: default; }
+.approval-mode-trigger:hover:not(:disabled) { background: color-mix(in srgb, currentColor 8%, transparent); }
+.approval-mode-trigger small { font-size: 10px; opacity: .7; }
+.approval-mode-menu { position: absolute; z-index: 50; bottom: calc(100% + 10px); left: 0; width: min(370px, calc(100vw - 64px)); padding: 10px; border-radius: 16px; border: 1px solid #d4d1cb; background: #faf9f6; color: #252823; box-shadow: 0 10px 40px #0003; }
+.approval-mode-heading { padding: 5px 10px 10px; font-size: 12px; opacity: .65; }
+.approval-mode-menu button { display: grid; grid-template-columns: 24px 1fr 16px; gap: 10px; align-items: center; width: 100%; padding: 10px 8px; border: 0; border-radius: 10px; background: transparent; color: inherit; text-align: left; cursor: pointer; }
+.approval-mode-menu button:hover, .approval-mode-menu button:focus-visible { background: #80808018; outline: 2px solid #7c8c7666; }
+.approval-mode-menu strong { display: block; font-size: 14px; font-weight: 600; }
+.approval-mode-menu small { display: block; margin-top: 4px; line-height: 1.4; font-size: 12px; opacity: .7; }
+.approval-mode-menu .full-access, .approval-mode-trigger.full-access { color: #c15c20; }
+[data-theme="dark"] .approval-mode-menu { background: #272925; color: #e8e8df; border-color: #44473f; }
+[data-theme="dark"] .approval-mode-menu .full-access, [data-theme="dark"] .approval-mode-trigger.full-access { color: #f29a62; }

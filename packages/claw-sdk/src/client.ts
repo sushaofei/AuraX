@@ -34,6 +34,7 @@ export class ClawClient {
     path: string,
     options: {
       json?: unknown;
+      acceptResultInterrupt?: boolean;
       query?: Record<string, string | number | undefined>;
       idempotencyKey?: string;
       expectedVersion?: number;
@@ -81,7 +82,11 @@ export class ClawClient {
         parsed = { message: raw };
       }
     }
-    if (!response.ok) {
+    const resultInterrupt = options.acceptResultInterrupt && response.status === 409 &&
+      typeof parsed === "object" && parsed !== null && "code" in parsed &&
+      (parsed.code === "needs_human" || parsed.code === "needs_resume") &&
+      "session_id" in parsed && typeof parsed.session_id === "string";
+    if (!response.ok && !resultInterrupt) {
       const errorBody = (parsed ?? {}) as {
         code?: string;
         message?: string;

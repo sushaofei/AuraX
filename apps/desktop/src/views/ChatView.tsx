@@ -28,6 +28,7 @@ import {
   saveSessionOrigin,
   saveStreamingBuffer,
 } from "../cache";
+import { ApprovalModeSelector, useApprovalMode } from "../components/ApprovalModeSelector";
 import { ExecutionTracePanel } from "../components/ExecutionTracePanel";
 import { MarkdownBody } from "../components/MarkdownBody";
 import { SkillSelector } from "../components/SkillSelector";
@@ -58,6 +59,7 @@ export function ChatView({
   onSession: (id: string | null) => void;
 }) {
   const queryClient = useQueryClient();
+  const approvalMode = useApprovalMode(client, sessionId, "streaming");
   const [draft, setDraft] = useState(() => loadChatDraft(sessionId));
   const [streamNote, setStreamNote] = useState("");
   const [optimistic, setOptimistic] = useState<string[]>([]);
@@ -286,9 +288,10 @@ export function ChatView({
 
   const send = useMutation({
     mutationFn: async (text: string) => {
+      if (approvalMode.loading) throw new Error("正在读取审批模式支持状态，请稍后发送");
       clearStreaming();
       if (!sessionId) {
-        const created = await createTask(client, { goal: text, source: "chat" });
+        const created = await createTask(client, { goal: text, source: "chat", ...(approvalMode.supported ? { interactionMode: "streaming" as const, ...approvalMode.options } : {}) });
         saveSessionOrigin(created.body.session_id, "chat");
         onSession(created.body.session_id);
         return created.body;
@@ -304,13 +307,14 @@ export function ChatView({
         current.projection_version,
         transcript.data?.projection_version ?? 0,
       );
-      return (await followUp(client, sessionId, text, expectedVersion, current.status)).body;
+      return (await followUp(client, sessionId, text, expectedVersion, current.status, approvalMode.options)).body;
     },
     onMutate: (text) => {
       followTailRef.current = true;
       setOptimistic((prev) => [...prev, text]);
     },
     onSuccess: (_data, _text, _context) => {
+      approvalMode.clear();
       setDraft("");
       saveChatDraft("", sessionId);
       if (sessionId) {
@@ -403,7 +407,7 @@ export function ChatView({
               {traceVisible ? "收起轨迹" : "执行轨迹"}
               {traceCount > 0 ? ` · ${traceCount}` : ""}
             </button>
-            <button className="btn ghost" type="button" onClick={() => onSession(null)}>
+            <button className="btn ghost" type="button" onClick={() => { approvalMode.clear(); onSession(null); }}>
               新开一轮
             </button>
           </div>
@@ -421,7 +425,7 @@ export function ChatView({
           {missing ? (
             <div className="chat-notice error">
               缓存的 Session 已不存在。
-              <button className="btn ghost" type="button" onClick={() => onSession(null)}>
+              <button className="btn ghost" type="button" onClick={() => { approvalMode.clear(); onSession(null); }}>
                 开始新对话
               </button>
             </div>
@@ -477,7 +481,7 @@ export function ChatView({
             <div className="card chat-approval">
               <strong>待人审</strong>
               <p>{transcript.data.pending_approval.reason}</p>
-              <p className="mono">{transcript.data.pending_approval.tool_name}</p>
+              <p className="mono">{transcript.data.pending_approval.action_label ?? transcript.data.pending_approval.tool_name}</p>
               {approve.isSuccess &&
               approve.variables?.approvalId === transcript.data.pending_approval.approval_id ? (
                 <p className="mono">审批已提交，等待 Runtime 恢复…</p>
@@ -547,12 +551,17 @@ export function ChatView({
             }}
           />
           <div className="chat-composer-footer">
-            <span className="mono">⌘ ↵ 发送</span>
+            <ApprovalModeSelector
+              value={approvalMode.selected ?? (sessionId ? task.data?.effective_approval_mode ?? null : approvalMode.defaultMode)}
+              supported={approvalMode.supported} pending={Boolean(sessionId && approvalMode.selected)}
+              disabled={send.isPending || closed || missing || Boolean(sessionId && !["created", "ready", "paused"].includes(task.data?.status ?? ""))}
+              onChange={approvalMode.choose}
+            />
             <button
               className="chat-send"
               type="button"
               aria-label={sessionId ? "追问" : "开始"}
-              disabled={!draft.trim() || send.isPending || closed || waiting || missing}
+              disabled={approvalMode.loading || !draft.trim() || send.isPending || closed || waiting || missing}
               onClick={() => send.mutate(draft.trim())}
             >
               <span aria-hidden="true">↑</span>

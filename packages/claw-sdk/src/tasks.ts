@@ -2,6 +2,8 @@ import type { ClawClient } from "./client.js";
 import { ClawApiError, newIdempotencyKey } from "./errors.js";
 import type {
   CommandAccepted,
+  ApprovalMode,
+  ApprovalModeCapabilities,
   CreateTaskInput,
   ActivityPage,
   SyncInvokeInput,
@@ -12,6 +14,10 @@ import type {
   Transcript,
 } from "./types.js";
 
+export function getApprovalModes(client: ClawClient): Promise<{ body: ApprovalModeCapabilities }> {
+  return client.request<ApprovalModeCapabilities>("GET", "/v1/approval-modes");
+}
+
 export function createTask(
   client: ClawClient,
   input: CreateTaskInput,
@@ -21,6 +27,8 @@ export function createTask(
     idempotencyKey,
     json: {
       goal: input.goal,
+      ...(input.approvalMode ? { approval_mode: input.approvalMode } : {}),
+      ...(input.interactionMode ? { interaction_mode: input.interactionMode } : {}),
       source: input.source ?? "chat",
       ...(input.scheduleId ? { schedule_id: input.scheduleId } : {}),
       ...(input.occurrenceId ? { occurrence_id: input.occurrenceId } : {}),
@@ -80,6 +88,7 @@ export function getResult(
   options: { wait?: boolean; timeoutSeconds?: number } = {},
 ): Promise<{ body: TaskResult; status: number; headers: Headers }> {
   return client.request<TaskResult>("GET", `/v1/tasks/${sessionId}/result`, {
+    acceptResultInterrupt: true,
     query: {
       wait: options.wait ? "true" : undefined,
       timeout_seconds: options.timeoutSeconds,
@@ -94,8 +103,10 @@ export function syncInvokeTask(
 ): Promise<{ body: TaskResult; status: number; headers: Headers }> {
   return client.request<TaskResult>("POST", "/v1/tasks/sync", {
     idempotencyKey,
+    acceptResultInterrupt: true,
     json: {
       goal: input.goal,
+      ...(input.approvalMode ? { approval_mode: input.approvalMode } : {}),
       ...(input.timeoutSeconds !== undefined
         ? { timeout_seconds: input.timeoutSeconds }
         : {}),
@@ -122,8 +133,10 @@ export function requestRun(
   sessionId: string,
   expectedVersion: number,
   idempotencyKey = newIdempotencyKey("run"),
+  options: { approvalMode?: ApprovalMode } = {},
 ): Promise<{ body: CommandAccepted }> {
   return client.request<CommandAccepted>("POST", `/v1/sessions/${sessionId}/runs`, {
+    ...(options.approvalMode ? { json: { approval_mode: options.approvalMode } } : {}),
     idempotencyKey,
     expectedVersion,
   });
@@ -137,8 +150,9 @@ async function appendMessageWithRetry(
   message: string,
   expectedVersion: number,
 ): Promise<{ body: CommandAccepted; version: number }> {
+  const idempotencyKey = newIdempotencyKey("message");
   try {
-    const appended = await appendMessage(client, sessionId, message, expectedVersion);
+    const appended = await appendMessage(client, sessionId, message, expectedVersion, idempotencyKey);
     return { body: appended.body, version: expectedVersion };
   } catch (error) {
     if (!(error instanceof ClawApiError) || error.code !== "version_conflict") {
@@ -150,6 +164,7 @@ async function appendMessageWithRetry(
       sessionId,
       message,
       latest.body.projection_version,
+      idempotencyKey,
     );
     return { body: refreshed.body, version: latest.body.projection_version };
   }
@@ -159,15 +174,18 @@ async function requestRunWithRetry(
   client: ClawClient,
   sessionId: string,
   expectedVersion: number,
+  options: { approvalMode?: ApprovalMode },
 ): Promise<{ body: CommandAccepted }> {
+  const idempotencyKey = newIdempotencyKey("run");
   try {
-    return await requestRun(client, sessionId, expectedVersion);
+    return await requestRun(client, sessionId, expectedVersion, idempotencyKey, options);
   } catch (error) {
     if (!(error instanceof ClawApiError) || error.code !== "version_conflict") {
       throw error;
     }
     const latest = await getTask(client, sessionId);
-    return requestRun(client, sessionId, latest.body.projection_version);
+    if (!RUNNABLE_SESSION_STATUSES.has(latest.body.status)) throw error;
+    return requestRun(client, sessionId, latest.body.projection_version, idempotencyKey, options);
   }
 }
 
@@ -177,6 +195,7 @@ export async function followUp(
   message: string,
   expectedVersion: number,
   sessionStatus: string,
+  options: { approvalMode?: ApprovalMode } = {},
 ): Promise<{ body: CommandAccepted }> {
   const appended = await appendMessageWithRetry(client, sessionId, message, expectedVersion);
   if (!RUNNABLE_SESSION_STATUSES.has(sessionStatus)) {
@@ -184,7 +203,7 @@ export async function followUp(
   }
   const latest = await getTask(client, sessionId);
   const runVersion = Math.max(latest.body.projection_version, appended.version + 1);
-  return requestRunWithRetry(client, sessionId, runVersion);
+  return requestRunWithRetry(client, sessionId, runVersion, options);
 }
 
 export function cancelTask(

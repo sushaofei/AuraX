@@ -2,6 +2,7 @@ import { type Page } from "@playwright/test";
 
 export type ClawTraffic = {
   paths: string[];
+  taskInputs: Array<Record<string, unknown>>;
   identities: Array<{ tenantId: string; deptId: string; userId: string }>;
   cancels: number;
   closes: number;
@@ -26,6 +27,7 @@ export async function mockClaw(
 ): Promise<ClawTraffic> {
   const traffic: ClawTraffic = {
     paths: [],
+    taskInputs: [],
     identities: [],
     cancels: 0,
     closes: 0,
@@ -75,14 +77,29 @@ export async function mockClaw(
     availability: `installation_${skillStatus}`,
   });
 
+  let approvalMode: string | null = null;
+  let interactionMode = "streaming";
   await page.route("**/v1/**", async (route) => {
     const url = new URL(route.request().url());
+    if (["/v1/tasks", "/v1/tasks/sync"].includes(url.pathname) && route.request().method() === "POST") {
+      const input = route.request().postDataJSON() as Record<string, unknown>;
+      traffic.taskInputs.push(input);
+      interactionMode = url.pathname.endsWith("/sync") ? "non_streaming" : String(input.interaction_mode ?? "streaming");
+      approvalMode = String(input.approval_mode ?? (interactionMode === "streaming" ? "request_approval" : "full_access"));
+    }
     const json = (body: unknown, status = 200) =>
       route.fulfill({
         status,
         contentType: "application/json",
-        body: JSON.stringify(body),
+        body: JSON.stringify(approvalMode && typeof body === "object" && body !== null && "session_id" in body
+          ? { ...body, effective_approval_mode: approvalMode, interaction_mode: interactionMode, approval_mode_revision: 1 }
+          : body),
       });
+    if (url.pathname === "/v1/approval-modes") {
+      await json({ version: 1, modes: ["request_approval", "auto_review", "full_access"],
+        defaults: { streaming: "request_approval", non_streaming: "full_access" } });
+      return;
+    }
     traffic.paths.push(`${route.request().method()} ${url.pathname}`);
     traffic.identities.push({
       tenantId: route.request().headers()["x-tenant-id"] ?? "",

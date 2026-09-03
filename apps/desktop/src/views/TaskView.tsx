@@ -27,6 +27,7 @@ import {
   saveTraceOpen,
   saveTraceWidth,
 } from "../cache";
+import { ApprovalModeSelector, useApprovalMode } from "../components/ApprovalModeSelector";
 import { ExecutionTracePanel } from "../components/ExecutionTracePanel";
 import { MarkdownBody } from "../components/MarkdownBody";
 import { SkillSelector } from "../components/SkillSelector";
@@ -46,6 +47,7 @@ export function TaskView({
   onSession: (id: string | null) => void;
 }) {
   const queryClient = useQueryClient();
+  const approvalMode = useApprovalMode(client, sessionId, "non_streaming");
   const [draft, setDraft] = useState(() => loadTaskDraft(sessionId));
   const [triggerMode, setTriggerMode] = useState<TriggerMode>("async");
   const [accepted, setAccepted] = useState<TaskAccepted | null>(null);
@@ -153,18 +155,19 @@ export function TaskView({
 
   const trigger = useMutation({
     mutationFn: async (text: string) => {
+      if (approvalMode.loading) throw new Error("正在读取审批模式支持状态，请稍后发送");
       if (sessionId) {
         throw new Error("任务只允许提交一次；如需执行新目标，请新建任务");
       }
       if (triggerMode === "sync") {
-        const invoked = await syncInvokeTask(client, { goal: text, timeoutSeconds: 120 });
+        const invoked = await syncInvokeTask(client, { goal: text, timeoutSeconds: 120, ...approvalMode.options });
         setInvokeResult(invoked.body);
         setInvokeStatus(invoked.status);
         saveSessionOrigin(invoked.body.session_id, "task");
         onSession(invoked.body.session_id);
         return invoked.body;
       }
-      const created = await createTask(client, { goal: text, source: "chat" });
+      const created = await createTask(client, { goal: text, source: "chat", ...(approvalMode.supported ? { interactionMode: "non_streaming" as const, ...approvalMode.options } : {}) });
       setAccepted(created.body);
       saveSessionOrigin(created.body.session_id, "task");
       onSession(created.body.session_id);
@@ -177,6 +180,7 @@ export function TaskView({
       return waited.body;
     },
     onSuccess: () => {
+      approvalMode.clear();
       setDraft("");
       saveTaskDraft("");
       void queryClient.invalidateQueries();
@@ -300,6 +304,7 @@ export function TaskView({
               className="btn ghost"
               type="button"
               onClick={() => {
+                approvalMode.clear();
                 onSession(null);
                 setAccepted(null);
                 setInvokeResult(null);
@@ -350,7 +355,8 @@ export function TaskView({
                 className="btn ghost"
                 type="button"
                 onClick={() => {
-                  onSession(null);
+                  approvalMode.clear();
+                onSession(null);
                   setAccepted(null);
                   setInvokeResult(null);
                 }}
@@ -365,7 +371,9 @@ export function TaskView({
               {streamNote ? ` · ${streamNote}` : ""}
             </p>
           ) : null}
-          {!sessionId ? (
+          {sessionId ? <ApprovalModeSelector value={task.data?.effective_approval_mode ?? null}
+          supported={approvalMode.supported} disabled onChange={approvalMode.choose} /> : null}
+        {!sessionId ? (
             <section className="task-setup" aria-labelledby="task-mode-title">
               <div className="task-setup-heading">
                 <div>
@@ -452,7 +460,7 @@ export function TaskView({
             <div className="card chat-approval">
               <strong>待人审</strong>
               <p>{transcript.data.pending_approval.reason}</p>
-              <p className="mono">{transcript.data.pending_approval.tool_name}</p>
+              <p className="mono">{transcript.data.pending_approval.action_label ?? transcript.data.pending_approval.tool_name}</p>
               {approve.isSuccess &&
               approve.variables?.approvalId === transcript.data.pending_approval.approval_id ? (
                 <p className="mono">审批已提交，等待 Runtime 恢复…</p>
@@ -499,6 +507,8 @@ export function TaskView({
             }}
           />
           <div className="chat-composer-footer">
+            <ApprovalModeSelector value={approvalMode.selected ?? approvalMode.defaultMode}
+              supported={approvalMode.supported} disabled={trigger.isPending} onChange={approvalMode.choose} />
             <span className="mono">
               {triggerMode === "sync" ? "同步等待结果" : "异步提交并等待结果"} · Enter 发送
             </span>
@@ -506,7 +516,7 @@ export function TaskView({
               className="chat-send"
               type="button"
               aria-label={triggerMode === "sync" ? "同步调用" : "异步触发"}
-              disabled={!draft.trim() || trigger.isPending}
+              disabled={approvalMode.loading || !draft.trim() || trigger.isPending}
               onClick={() => trigger.mutate(draft.trim())}
             >
               <span aria-hidden="true">↑</span>

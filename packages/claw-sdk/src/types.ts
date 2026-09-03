@@ -1,13 +1,29 @@
+export type ApprovalMode = "request_approval" | "auto_review" | "full_access";
+export type InteractionMode = "streaming" | "non_streaming";
+export type ApprovalState = {
+  effective_approval_mode?: ApprovalMode | null;
+  interaction_mode?: InteractionMode | null;
+  approval_mode_source?: "explicit" | "default" | "inherited" | "legacy";
+  approval_mode_revision?: number;
+};
+export type ApprovalModeCapabilities = {
+  version: number;
+  modes: ApprovalMode[];
+  defaults: Record<InteractionMode, ApprovalMode>;
+};
+
 export type TaskSource = "chat" | "schedule";
 
 export type CreateTaskInput = {
+  approvalMode?: ApprovalMode;
+  interactionMode?: InteractionMode;
   goal: string;
   source?: TaskSource;
   scheduleId?: string;
   occurrenceId?: string;
 };
 
-export type TaskAccepted = {
+export type TaskAccepted = ApprovalState & {
   session_id: string;
   run_id: string;
   status: string;
@@ -16,7 +32,7 @@ export type TaskAccepted = {
   stream_url: string;
 };
 
-export type TaskView = {
+export type TaskView = ApprovalState & {
   tenant_id: string;
   session_id: string;
   root_session_id: string;
@@ -51,6 +67,9 @@ export type TranscriptMessage = {
 };
 
 export type PendingApproval = {
+  action_kind?: string;
+  action_label?: string;
+  decision_source?: string;
   approval_id: string;
   tool_name: string;
   reason: string;
@@ -60,7 +79,7 @@ export type PendingApproval = {
   status: string;
 };
 
-export type Transcript = {
+export type Transcript = ApprovalState & {
   session_id: string;
   projection_version: number;
   status: string;
@@ -102,7 +121,7 @@ export type ActivityPage = {
   has_more: boolean;
 };
 
-export type CommandAccepted = {
+export type CommandAccepted = ApprovalState & {
   session_id: string;
   run_id: string | null;
   status: string;
@@ -118,11 +137,12 @@ export type WaitOutcome =
   | "needs_resume";
 
 export type SyncInvokeInput = {
+  approvalMode?: ApprovalMode;
   goal: string;
   timeoutSeconds?: number;
 };
 
-export type TaskResult = {
+export type TaskResult = ApprovalState & {
   session_id: string;
   run_id?: string | null;
   status: string;

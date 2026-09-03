@@ -420,7 +420,7 @@ test("approval refreshes the task version and shows submission feedback", async 
   await page.getByRole("button", { name: "开始" }).click();
   await expect(page.getByText("待人审")).toBeVisible();
 
-  await page.getByRole("button", { name: "批准" }).click();
+  await page.getByRole("button", { name: "批准", exact: true }).click();
 
   await expect(page.getByText("审批已提交，等待 Runtime 恢复…")).toBeVisible();
   expect(traffic.approvals).toBe(1);
