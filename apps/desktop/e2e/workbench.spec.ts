@@ -47,6 +47,7 @@ test("critical views load without hitting internal APIs or AuraMCP", async ({ pa
   await expect(page.getByPlaceholder("搜索 MCP 服务器")).toBeVisible();
   await page.getByRole("button", { name: "添加服务器" }).first().click();
   await expect(page.getByRole("heading", { name: "连接至自定义 MCP" })).toBeVisible();
+  await expect(page.getByLabel("允许的 Tool 前缀")).toHaveCount(0);
   await expect(page.getByLabel("认证方式")).toBeVisible();
   await expect(page.getByPlaceholder("credential_ref（必填引用，不是明文）")).toBeVisible();
   await page.getByLabel("认证方式").selectOption("none");
@@ -175,6 +176,7 @@ test("MCP view exposes quarantined Catalog instead of only aggregate runtime sta
   await expect(page.getByRole("switch", { name: "停用 ChainTowerMCP" })).toBeVisible();
   await page.getByRole("button", { name: "配置 ChainTowerMCP" }).click();
   await expect(page.getByRole("heading", { name: "配置 ChainTowerMCP" })).toBeVisible();
+  await expect(page.getByLabel("允许的 Tool 前缀")).toHaveCount(0);
   await expect(page.getByRole("button", { name: "同步目录" })).toBeVisible();
   await expect(page.getByRole("button", { name: "← 返回服务器" })).toBeVisible();
   await page.getByRole("button", { name: "查看能力" }).click();

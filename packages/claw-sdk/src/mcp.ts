@@ -138,7 +138,6 @@ export type McpServerConfigInput = {
   protocol_revision?: McpProtocolRevision;
   auth_strategy?: McpAuthStrategy;
   credential_ref?: string | null;
-  allowed_tool_prefixes?: string[];
   allowed_cidrs?: string[];
 };
 

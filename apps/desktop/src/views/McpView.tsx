@@ -54,7 +54,6 @@ type McpFormState = {
   protocol_revision: McpProtocolRevision;
   auth_strategy: McpAuthStrategy;
   credential_ref: string;
-  allowed_tool_prefixes: string;
 };
 
 type EditorState = { kind: "create" } | { kind: "edit"; serverId: string } | null;
@@ -66,7 +65,6 @@ const EMPTY_MCP_FORM: McpFormState = {
   protocol_revision: MCP_PROTOCOL_REVISION_DEFAULT,
   auth_strategy: "workload_trusted_context",
   credential_ref: "",
-  allowed_tool_prefixes: "",
 };
 
 function isMcpAuthStrategy(value: string | undefined): value is McpAuthStrategy {
@@ -90,21 +88,15 @@ function formFromServer(server: McpServerRecord): McpFormState {
       ? config.auth_strategy
       : "workload_trusted_context",
     credential_ref: config?.credential_ref ?? "",
-    allowed_tool_prefixes: (config?.allowed_tool_prefixes ?? []).join(", "),
   };
 }
 
 function buildMcpPayload(form: McpFormState, endpoint: string): McpServerConfigInput {
-  const allowedToolPrefixes = form.allowed_tool_prefixes
-    .split(",")
-    .map((part) => part.trim())
-    .filter(Boolean);
   const base = {
     server_id: form.server_id.trim(),
     title: form.title.trim(),
     endpoint,
     protocol_revision: form.protocol_revision,
-    allowed_tool_prefixes: allowedToolPrefixes,
   };
   return buildMcpServerConfigPayload(
     form.auth_strategy === "none"
@@ -530,15 +522,6 @@ function McpEditor({
               <div className="mcp-security-note">不会向远端发送 Authorization Bearer，仍受 AuraClaw Policy 与 Egress 控制。</div>
             )}
             {nonePublicConflict ? <p className="error">无远端认证不能用于 public endpoint。</p> : null}
-            <label className="mcp-field">
-              <span>允许的 Tool 前缀</span>
-              <input
-                aria-label="允许的 Tool 前缀"
-                placeholder="repo., issue., search.（逗号分隔；留空表示不额外限制）"
-                value={form.allowed_tool_prefixes}
-                onChange={(event) => onChange({ ...form, allowed_tool_prefixes: event.target.value })}
-              />
-            </label>
           </section>
 
           {server ? (

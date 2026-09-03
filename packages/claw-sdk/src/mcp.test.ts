@@ -78,8 +78,8 @@ describe("createMcpServer", () => {
       endpoint: "http://127.0.0.1:8020/mcp",
       auth_strategy: "workload_trusted_context",
       credential_ref: "vault/auramcp#workload",
-      allowed_tool_prefixes: ["auramcp."],
     });
+    expect(JSON.parse(body ?? "{}")).not.toHaveProperty("allowed_tool_prefixes");
     expect(JSON.parse(body ?? "{}")).toMatchObject({
       endpoint: "http://127.0.0.1:8020/mcp",
       network_mode: "loopback",
@@ -105,7 +105,6 @@ describe("createMcpServer", () => {
       title: "Local Smoke MCP",
       endpoint: "http://127.0.0.1:48080/mcp",
       auth_strategy: "none",
-      allowed_tool_prefixes: ["demo."],
     });
     const payload = JSON.parse(body ?? "{}");
     expect(payload).toMatchObject({
@@ -135,8 +134,8 @@ describe("createMcpServer", () => {
       endpoint: "http://10.244.16.131:48088/rpc-api/agent-runtime/mcp",
       protocol_revision: "2025-06-18",
       auth_strategy: "none",
-      allowed_tool_prefixes: ["price_insight."],
     });
+    expect(JSON.parse(body ?? "{}")).not.toHaveProperty("allowed_tool_prefixes");
     expect(JSON.parse(body ?? "{}")).toMatchObject({
       endpoint: "http://10.244.16.131:48088/rpc-api/agent-runtime/mcp",
       network_mode: "private",
@@ -164,7 +163,6 @@ describe("createMcpServer", () => {
       endpoint: "http://127.0.0.1:48088/rpc-api/agent-runtime/mcp",
       protocol_revision: "2025-06-18",
       auth_strategy: "none",
-      allowed_tool_prefixes: ["price_insight."],
     });
     expect(JSON.parse(body ?? "{}").protocol_revision).toBe("2025-06-18");
   });
@@ -222,13 +220,13 @@ describe("updateMcpServer", () => {
         endpoint: "http://127.0.0.1:48088/rpc-api/agent-runtime/mcp",
         protocol_revision: "2025-06-18",
         auth_strategy: "none",
-        allowed_tool_prefixes: ["price_insight."],
       },
       1,
     );
     expect(method).toBe("PUT");
     expect(url).toBe("http://claw.example/v1/admin/mcp-servers/chaintower_mcp");
     expect(expectedRevision).toBe("1");
+    expect(JSON.parse(body ?? "{}")).not.toHaveProperty("allowed_tool_prefixes");
     expect(JSON.parse(body ?? "{}")).toMatchObject({
       protocol_revision: "2025-06-18",
       auth_strategy: "none",
@@ -259,7 +257,6 @@ describe("saveMcpServer", () => {
         endpoint: "http://127.0.0.1:48088/rpc-api/agent-runtime/mcp",
         protocol_revision: "2025-06-18",
         auth_strategy: "none",
-        allowed_tool_prefixes: ["price_insight."],
       },
       {
         server_id: "chaintower_mcp",
@@ -290,7 +287,6 @@ describe("saveMcpServer", () => {
         title: "New MCP",
         endpoint: "http://127.0.0.1:8020/mcp",
         auth_strategy: "none",
-        allowed_tool_prefixes: ["demo."],
       },
       undefined,
     );
@@ -317,7 +313,6 @@ describe("saveMcpServer", () => {
         title: "Old MCP",
         endpoint: "http://127.0.0.1:8020/mcp",
         auth_strategy: "none",
-        allowed_tool_prefixes: ["demo."],
       },
       {
         server_id: "old-mcp",

@@ -170,7 +170,6 @@ export type McpServerRecord = {
     credential_ref?: string | null;
     auth_strategy?: string;
     network_mode?: string;
-    allowed_tool_prefixes?: string[];
   };
   runtime?: {
     observed_state?: string;
