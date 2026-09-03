@@ -1,0 +1,13 @@
+.history-notice {
+  padding: 12px 16px;
+  margin: 0 0 20px;
+  border: 1px solid var(--border, var(--paper-2));
+  border-radius: 10px;
+  background: var(--surface, var(--paper));
+  color: var(--ink);
+  font-size: 12px;
+  line-height: 1.65;
+}
+
+.history-notice p { margin: 0; }
+.history-notice .btn { margin-top: 10px; }
