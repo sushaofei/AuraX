@@ -1,4 +1,5 @@
 import {
+  ClawApiError,
   changeSkillInstallation,
   changeSkillPublisherStatus,
   getSkill,
@@ -19,6 +20,7 @@ import {
   type ClawClient,
   type SkillCatalogItem,
   type SkillPublisherView,
+  type SkillUpgradeState,
 } from "@aurax/claw-sdk";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
@@ -33,6 +35,7 @@ const SKILL_LABELS: Record<string, string> = {
   retained: "已保留", purged: "已清理", suspended: "已暂停", accepted: "已通过",
   rejected: "已拒绝", quarantined: "已隔离", low: "低风险", medium: "中风险", high: "高风险",
   firing: "告警中", ok: "正常", inactive: "未触发", insufficient_data: "样本不足",
+  installation_version_mismatch: "安装版本不匹配", installation_digest_mismatch: "安装包不匹配",
   publication_unavailable: "发布不可用", not_installed: "未安装", dependencies_unavailable: "依赖不可用",
   installation_disabled: "不可调用", installation_draining: "停止接收新任务", installation_uninstalled: "不可调用",
 };
@@ -41,6 +44,15 @@ function SkillBadge({ value }: { value: string }) {
   const tone = ["active", "available", "accepted", "ok", "low"].includes(value) ? "ok"
     : ["revoked", "rejected", "quarantined", "high", "firing"].includes(value) ? "off" : "";
   return <span className={`pill ${tone}`} title={value}>{SKILL_LABELS[value] ?? value}</span>;
+}
+
+function upgradeMessage(upgrade: SkillUpgradeState): string {
+  switch (upgrade.phase) {
+    case "draining": return "新版本已切换，正在等待旧版本任务结束。结束后自动卸载并删除旧版本。";
+    case "deleting": return "新版本已切换，正在删除旧版本及其包文件。";
+    case "blocked": return "旧版本清理暂未完成，系统会继续重试。请刷新状态查看进展。";
+    case "completed": return "升级完成，旧版本及其包文件已删除。";
+  }
 }
 
 function SkillSectionTitle({ number, title, description }: { number: string; title: string; description: string }) {
@@ -111,6 +123,7 @@ function CatalogPanel({ client }: { client: ClawClient }) {
   const refresh = () => {
     void queryClient.invalidateQueries({ queryKey: ["skill-catalog"] });
     void queryClient.invalidateQueries({ queryKey: ["skill-management"] });
+    void queryClient.invalidateQueries({ queryKey: ["skill-detail"] });
     void queryClient.invalidateQueries({ queryKey: ["skills"] });
   };
   const lifecycle = useMutation({
@@ -187,18 +200,36 @@ function CatalogPanel({ client }: { client: ClawClient }) {
       const selectedFiles = normalizeSkillPackageFiles(
         packageFiles.map((file) => [file.webkitRelativePath || file.name, file] as const),
       );
+      const manifest: unknown = JSON.parse(await selectedFiles["manifest.json"]!.text());
+      if (!manifest || typeof manifest !== "object" || !("publisher" in manifest) ||
+          !("name" in manifest) || !("version" in manifest) ||
+          typeof manifest.publisher !== "string" || typeof manifest.name !== "string" ||
+          typeof manifest.version !== "string") throw new Error("包清单缺少发布者、名称或版本");
+      let expectedRevision = 0;
+      let expectedInstallationRevision = 0;
+      try {
+        const current = (await getSkillManagement(client, manifest.publisher, manifest.name)).body;
+        expectedRevision = current.versions.find((item) => item.publication.version === manifest.version)?.publication.revision ?? 0;
+        expectedInstallationRevision = current.installation?.revision ?? 0;
+      } catch (error) {
+        if (!(error instanceof ClawApiError) || error.status !== 404) throw error;
+      }
+      const options = { expectedRevision, expectedInstallationRevision };
       const files: Record<string, string> = {};
       for (const [path, file] of Object.entries(selectedFiles)) files[path] = await fileBase64(file);
       const encodedBytes = Object.values(files).reduce((total, value) => total + value.length, 0);
       return encodedBytes > 8 * 1024 * 1024
-        ? publishSkillFilesStaged(client, files)
-        : publishSkillFiles(client, files);
+        ? publishSkillFilesStaged(client, files, "skill-package.json", options)
+        : publishSkillFiles(client, files, options);
     },
-    onSuccess: () => {
+    onSuccess: (response) => {
       setPackageFiles([]);
+      setSelectedIdentity({ publisher: response.body.publisher, name: response.body.name });
       refresh();
     },
   });
+
+  const upgrade = management.data?.upgrade ?? selected?.upgrade;
 
   const visibleSkills = (catalog.data ?? []).filter((skill) => filter === "all" || skill.installation?.status === filter);
   const groups = new Map<string, SkillCatalogItem[]>();
@@ -212,12 +243,12 @@ function CatalogPanel({ client }: { client: ClawClient }) {
           <button className="btn amber" type="button" aria-expanded={showPublish} onClick={() => setShowPublish(!showPublish)}>{showPublish ? "收起发布" : "＋ 发布 Skill"}</button>
         </div>
         {showPublish ? <section className="skill-surface stack">
-            <SkillSectionTitle number="＋" title="发布已签名 Skill 包" description="选择完整包目录，系统会根据大小自动选择上传方式。" />
+            <SkillSectionTitle number="＋" title="发布已签名 Skill 包" description="发布新版会自动替换当前版本；旧任务结束后自动卸载并删除旧版本。" />
             <div className="stack form-block">
               <label>包目录<input type="file" multiple {...({ webkitdirectory: "" } as Record<string, string>)} onChange={(event) => setPackageFiles(Array.from(event.target.files ?? []))} /></label>
               <p className="skill-muted">私钥不得进入 AuraX。请先离线签名；签名、摘要与内容策略由 AuraClaw 校验。</p>
               <div className="row"><span className="skill-muted">已选择 {packageFiles.length} 个文件</span><button className="btn amber" type="button" disabled={publish.isPending || !packageFiles.length} onClick={() => publish.mutate()}>{publish.isPending ? "正在发布…" : "确认发布"}</button></div>
-              {publish.isSuccess ? <p role="status">已发布，技能目录已刷新。</p> : null}
+              {publish.isSuccess ? <p role="status">{publish.data.body.upgrade ? upgradeMessage(publish.data.body.upgrade) : "已发布，技能目录已刷新。"}</p> : null}
             </div>
           {publish.error ? (
             <p className="error">
@@ -254,9 +285,9 @@ function CatalogPanel({ client }: { client: ClawClient }) {
             <section className="skill-surface"><SkillSectionTitle number="02" title="能力依赖" description="技能声明的 Tool、Resource 与其他 Skill 依赖。" />
               {([['Tool', detail.data?.required_tools ?? selected.required_tools], ['Resource', detail.data?.required_resources ?? selected.required_resources], ['Skill', detail.data?.required_skills ?? selected.required_skills]] as const).map(([name, dependencies]) => <details className="skill-dependency" key={name}><summary>{name}<span className="skill-count">{dependencies.length}</span></summary>{dependencies.length ? dependencies.map((dependency, index) => <pre key={index}>{typeof dependency === "string" ? dependency : JSON.stringify(dependency, null, 2)}</pre>) : <p className="skill-muted">未声明 {name} 依赖。</p>}</details>)}
             </section>
-            <section className="skill-surface"><SkillSectionTitle number="03" title="版本与治理" description="发布状态与租户安装相互独立。撤销与永久清理会再次确认。" />
+            <section className="skill-surface"><SkillSectionTitle number="03" title="当前版本" description="升级后自动删除旧版本，不保留版本历史。" />
             {management.isPending ? <p role="status">正在加载版本…</p> : management.error ? <p className="error">{errorText(management.error)}</p> : !management.data?.versions.length ? <p className="skill-muted">暂无版本记录。</p> : null}
-            {management.data?.versions.map((version, index) => (
+            {management.data?.versions.map((version, index) => version.publication.version === selected.version ? (
               <div className="governance-row" key={version.publication.version}>
                 <div className="stack"><div className="row"><strong>v{version.publication.version}</strong><SkillBadge value={version.publication.status} />{version.package ? <SkillBadge value={version.package.retention_status} /> : null}{version.package?.legal_hold ? <span className="pill">保全中</span> : null}</div><span className="skill-muted">更新于 {version.publication.updated_at}</span></div>
                 <div className="row">
@@ -265,13 +296,15 @@ function CatalogPanel({ client }: { client: ClawClient }) {
                   {version.publication.status === "revoked" && selected.installation?.status === "uninstalled" && version.package && version.package.retention_status !== "purged" && !version.package.legal_hold ? <button disabled={govern.isPending} className="btn danger" type="button" onClick={() => govern.mutate({ kind: "purge", index })}>永久清理</button> : null}
                 </div>
               </div>
-            ))}
+            ) : null)}
             {govern.error ? <p className="error">{errorText(govern.error, { redactedForbiddenMessage: "Skill 治理操作被后端拒绝；请检查生命周期状态或服务认证日志。" })}</p> : null}
             </section>
           </div><aside className="skill-surface skill-summary stack">
             <p className="kicker">Overview</p><h2>安装与状态</h2>
             <div className="row"><SkillBadge value={selected.availability ?? selected.status} /><SkillBadge value={selected.risk_level} /></div>
-            <dl className="detail-list"><dt>发布者</dt><dd>{selected.publisher}</dd><dt>最新版本</dt><dd>v{selected.latest_version ?? selected.version}</dd><dt>租户安装</dt><dd><SkillBadge value={selected.installation?.status ?? "未安装"} /></dd><dt>修订版本</dt><dd>{selected.installation?.revision ?? "—"}</dd><dt>升级策略</dt><dd>{selected.installation ? selected.installation.auto_upgrade ? "自动升级" : "固定版本" : "—"}</dd><dt>版本约束</dt><dd>{selected.installation?.version_constraint ?? "—"}</dd></dl>
+            <dl className="detail-list"><dt>发布者</dt><dd>{selected.publisher}</dd><dt>最新版本</dt><dd>v{selected.latest_version ?? selected.version}</dd><dt>租户安装</dt><dd><SkillBadge value={selected.installation?.status ?? "未安装"} /></dd><dt>修订版本</dt><dd>{selected.installation?.revision ?? "—"}</dd><dt>升级方式</dt><dd>发布新版后自动替换并清理旧版本</dd><dt>版本约束</dt><dd>{selected.installation?.version_constraint ?? "—"}</dd></dl>
+            {upgrade ? <div className="skill-notice" role="status"><p>{upgradeMessage(upgrade)}</p>{upgrade.phase === "blocked" && upgrade.reason_code ? <p>原因：{upgrade.reason_code === "skill_package_legal_hold" ? "旧包处于保全状态" : "清理服务暂时无法完成，请稍后刷新"}</p> : null}<button type="button" className="btn ghost" onClick={refresh} disabled={management.isFetching}>刷新清理状态</button></div> : null}
+            <button type="button" className="btn amber" onClick={() => { setSelectedIdentity(null); setShowPublish(true); }}>发布新版本</button>
             {selected.installation?.status === "draining" ? <p className="skill-notice">正在等待现有任务完成。再次卸载可选择强制取消任务。</p> : null}
             <fieldset className="skill-actions" disabled={lifecycle.isPending}>
               {selected.installation?.status === "active" ? <button className="btn ghost" type="button" onClick={() => lifecycle.mutate({ skill: selected, action: "disable" })}>停用</button> : null}

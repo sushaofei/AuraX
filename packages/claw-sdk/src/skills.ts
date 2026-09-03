@@ -11,6 +11,7 @@ import type {
   SkillPublisherView,
   SkillPublisherKeyRecord,
   SkillSummary,
+  SkillUpgradeState,
 } from "./types.js";
 
 const segment = (value: string) => encodeURIComponent(value);
@@ -46,6 +47,7 @@ export function getSkill(client: ClawClient, publisher: string, name: string) {
 }
 
 export type SkillManagementView = {
+  upgrade?: SkillUpgradeState | null;
   publisher: string;
   name: string;
   installation: SkillInstallationRecord | null;
@@ -202,14 +204,20 @@ export function changeSkillPublisherStatus(
   );
 }
 
+export type SkillPublishOptions = {
+  expectedRevision?: number;
+  expectedInstallationRevision?: number;
+};
+
 export function publishSkillFiles(
   client: ClawClient,
   files: Record<string, string>,
+  options: SkillPublishOptions = {},
 ) {
   return client.request<SkillCatalogItem>("POST", "/v1/admin/skill-publications", {
-    json: { activate: true, files },
+    json: { activate: true, files, expected_installation_revision: options.expectedInstallationRevision },
     idempotencyKey: newIdempotencyKey("skill-publish"),
-    expectedRevision: 0,
+    expectedRevision: options.expectedRevision ?? 0,
   });
 }
 
@@ -258,6 +266,7 @@ export async function publishSkillFilesStaged(
   client: ClawClient,
   files: Record<string, string>,
   name = "skill-package.json",
+  options: SkillPublishOptions = {},
 ) {
   const sortedFiles = Object.fromEntries(
     Object.entries(files).sort(([left], [right]) => left.localeCompare(right)),
@@ -284,9 +293,10 @@ export async function publishSkillFilesStaged(
       activate: true,
       artifact_ref: staged.body.artifact_ref,
       expected_digest: `sha256:${checksum}`,
+      expected_installation_revision: options.expectedInstallationRevision,
     },
     idempotencyKey: newIdempotencyKey("skill-publish-artifact"),
-    expectedRevision: 0,
+    expectedRevision: options.expectedRevision ?? 0,
   });
 }
 

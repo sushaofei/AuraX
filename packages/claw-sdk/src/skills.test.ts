@@ -6,6 +6,7 @@ import {
   listSkillCatalog,
   normalizeSkillPackageFiles,
   publishSkillFilesStaged,
+  publishSkillFiles,
   revokeSkillPublisherKey,
 } from "./skills.js";
 import type { SkillPublisherView } from "./types.js";
@@ -199,4 +200,23 @@ describe("Skill Admin SDK", () => {
     expect(url).toContain("cursor=opaque%2Bcursor");
     expect(url).toContain("limit=25");
   });
+});
+
+
+it("publishes with both revisions and retains the server cleanup phase", async () => {
+  let body: Record<string, unknown> = {};
+  let revision = "";
+  const upgrade = { operation_id: "upgrade", current_version: "2.0.0", generation: 2,
+    phase: "draining", reason_code: null };
+  const client = new ClawClient({ baseUrl: "http://claw.example", fetch: (async (_url, init) => {
+    body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+    revision = new Headers(init?.headers).get("X-Expected-Revision") ?? "";
+    return jsonResponse({ publisher: "acme", name: "test", version: "2.0.0", upgrade });
+  }) as typeof fetch });
+  const response = await publishSkillFiles(client, { "manifest.json": "e30=" }, {
+    expectedRevision: 4, expectedInstallationRevision: 7,
+  });
+  expect(revision).toBe("4");
+  expect(body.expected_installation_revision).toBe(7);
+  expect(response.body.upgrade).toEqual(upgrade);
 });

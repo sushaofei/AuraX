@@ -325,7 +325,16 @@ export type SkillPackageRecord = {
   purged_at: string | null;
 };
 
+export type SkillUpgradeState = {
+  operation_id: string;
+  current_version: string;
+  generation: number;
+  phase: "draining" | "deleting" | "blocked" | "completed";
+  reason_code: string | null;
+};
+
 export type SkillCatalogItem = {
+  upgrade?: SkillUpgradeState | null;
   publisher: string;
   name: string;
   version: string;

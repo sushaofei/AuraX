@@ -81,7 +81,7 @@ test("Skill catalog provides grouped navigation, focused details and responsive 
   await skills.getByRole("button", { name: /acme\/revision-demo/ }).click();
   await expect(skills.getByRole("heading", { name: "技能说明", exact: true })).toBeVisible();
   await expect(skills.getByRole("heading", { name: "能力依赖", exact: true })).toBeVisible();
-  await expect(skills.getByRole("heading", { name: "版本与治理", exact: true })).toBeVisible();
+  await expect(skills.getByRole("heading", { name: "当前版本", exact: true })).toBeVisible();
   await expect(skills.getByRole("heading", { name: "安装与状态", exact: true })).toBeVisible();
   await skills.locator(".skill-dependency summary").first().click();
   await expect(skills.getByText("未声明 Tool 依赖。")).toBeVisible();
