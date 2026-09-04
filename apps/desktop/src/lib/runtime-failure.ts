@@ -1,7 +1,8 @@
 const STOP_LABELS: Record<string, string> = {
-  runtime_step_budget_exceeded: "本轮步骤额度已用尽",
-  runtime_output_token_budget_exceeded: "本轮输出额度已用尽",
+  runtime_step_budget_exceeded: "本轮步骤限制已触发",
+  runtime_output_token_budget_exceeded: "本轮输出限制已触发",
   runtime_cost_budget_exceeded: "本轮成本额度已用尽",
+  runtime_cost_reservation_unavailable: "成本预留能力尚不可用，本轮未开始新的模型调用",
   runtime_deadline_exceeded: "本轮已到截止时间",
   runtime_no_progress_detected: "重复调用保护已停止本轮执行",
   runtime_budget_exceeded: "本轮触发旧版运行限制（未区分类型）",
