@@ -11,6 +11,7 @@ import type {
   TaskList,
   TaskResult,
   TaskView,
+  ReadRefreshGrant,
   Transcript,
 } from "./types.js";
 
@@ -27,6 +28,7 @@ export function createTask(
     idempotencyKey,
     json: {
       goal: input.goal,
+      ...(input.readRefresh ? { read_refresh: input.readRefresh } : {}),
       ...(input.approvalMode ? { approval_mode: input.approvalMode } : {}),
       ...(input.interactionMode ? { interaction_mode: input.interactionMode } : {}),
       source: input.source ?? "chat",
@@ -133,10 +135,13 @@ export function requestRun(
   sessionId: string,
   expectedVersion: number,
   idempotencyKey = newIdempotencyKey("run"),
-  options: { approvalMode?: ApprovalMode } = {},
+  options: { approvalMode?: ApprovalMode; readRefresh?: ReadRefreshGrant[] } = {},
 ): Promise<{ body: CommandAccepted }> {
   return client.request<CommandAccepted>("POST", `/v1/sessions/${sessionId}/runs`, {
-    ...(options.approvalMode ? { json: { approval_mode: options.approvalMode } } : {}),
+    ...((options.approvalMode || options.readRefresh) ? { json: {
+      ...(options.approvalMode ? { approval_mode: options.approvalMode } : {}),
+      ...(options.readRefresh ? { read_refresh: options.readRefresh } : {}),
+    } } : {}),
     idempotencyKey,
     expectedVersion,
   });
@@ -195,7 +200,7 @@ export async function followUp(
   message: string,
   expectedVersion: number,
   sessionStatus: string,
-  options: { approvalMode?: ApprovalMode } = {},
+  options: { approvalMode?: ApprovalMode; readRefresh?: ReadRefreshGrant[] } = {},
 ): Promise<{ body: CommandAccepted }> {
   const appended = await appendMessageWithRetry(client, sessionId, message, expectedVersion);
   if (!RUNNABLE_SESSION_STATUSES.has(sessionStatus)) {

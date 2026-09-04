@@ -437,6 +437,16 @@ export function ChatView({
               {streamNote ? ` · ${streamNote}` : ""}
             </p>
           ) : null}
+          {task.data?.runtime_budget?.usage ? (
+            <p className="chat-status-line" aria-label="本轮资源用量">
+              步骤 {task.data.runtime_budget.usage.steps_used ?? 0}/{task.data.runtime_budget.limits?.max_steps ?? "—"}
+              {" · "}模型 {task.data.runtime_budget.usage.model_turns ?? 0} 次
+              {" · "}工具尝试 {task.data.runtime_budget.usage.tool_attempts ?? 0} 次
+              （实际调用 {task.data.runtime_budget.usage.tool_dispatches ?? 0} 次）
+              {" · "}输出 token {task.data.runtime_budget.usage.output_tokens ?? 0}/{task.data.runtime_budget.limits?.max_output_tokens ?? "—"}
+              {task.data.runtime_budget.usage.output_tokens_reserved ? `（在途预留 ${task.data.runtime_budget.usage.output_tokens_reserved}）` : ""}
+            </p>
+          ) : null}
           {runStatus === "failed" ? (
             <div className="card run-failure" role="alert">
               <strong>{runtimeFailureLabel(runErrorCode)}</strong>

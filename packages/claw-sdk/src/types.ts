@@ -14,7 +14,10 @@ export type ApprovalModeCapabilities = {
 
 export type TaskSource = "chat" | "schedule";
 
+export type ReadRefreshGrant = { capability_id: string; max_calls?: number; min_interval_seconds?: number; duration_seconds?: number };
+
 export type CreateTaskInput = {
+  readRefresh?: ReadRefreshGrant[];
   approvalMode?: ApprovalMode;
   interactionMode?: InteractionMode;
   goal: string;
@@ -48,6 +51,7 @@ export type TaskView = ApprovalState & {
   result_summary: string | null;
   result_ref: string | null;
   artifact_refs: unknown[];
+  runtime_budget?: { run_id?: string; limits?: { max_steps?: number; max_output_tokens?: number }; usage?: { steps_used?: number; model_turns?: number; tool_attempts?: number; tool_dispatches?: number; output_tokens?: number; output_tokens_reserved?: number } };
   error: Record<string, unknown> | null;
   projection_version: number;
   projected_at: string;
