@@ -2,6 +2,18 @@ import { listSkills, toggleSkill, type ClawClient, type SkillSummary } from "@au
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { errorText } from "../lib/errors";
 
+function unavailableReason(skill: SkillSummary): string | null {
+  if (skill.installation?.status !== "active" || skill.availability === "available") return null;
+  switch (skill.availability) {
+    case "installation_version_mismatch":
+      return `安装版本不匹配：当前发布 ${skill.version}，安装绑定 ${skill.installation.version_constraint}。请到 Skill 管理页处理版本升级。`;
+    case "installation_digest_mismatch": return "安装包不匹配，请到 Skill 管理页处理版本升级。";
+    case "dependencies_unavailable": return "依赖不可用，请到 Skill 管理页检查依赖。";
+    case "publication_unavailable": return "发布不可用，请到 Skill 管理页检查发布状态。";
+    default: return "当前不可用，请到 Skill 管理页查看原因。";
+  }
+}
+
 export function SkillSelector({
   client,
   locked,
@@ -52,7 +64,8 @@ export function SkillSelector({
       {skills.error ? <p className="error">{errorText(skills.error)}</p> : null}
       <div className="chip-row">
         {selectableSkills.map((skill) => {
-          const pressed = skill.availability === "available";
+          const pressed = skill.installation?.status === "active";
+          const reason = unavailableReason(skill);
           return (
             <button
               key={`${skill.publisher}/${skill.name}`}
@@ -60,15 +73,20 @@ export function SkillSelector({
               className="skill-chip"
               aria-pressed={pressed}
               disabled={locked || toggle.isPending || !skill.installation}
-              title={skill.description || `${skill.publisher}/${skill.name}`}
+              title={reason ?? (skill.description || `${skill.publisher}/${skill.name}`)}
               onClick={() => toggle.mutate(skill)}
             >
               {skill.name}
-              <span>{pressed ? "开" : "关"}</span>
+              <span>{pressed ? (reason ? "已启用 · 不可用" : "开") : "关"}</span>
             </button>
           );
         })}
       </div>
+      {selectableSkills.filter((skill) => unavailableReason(skill)).map((skill) => (
+        <p className="error" key={`${skill.publisher}/${skill.name}-availability`}>
+          {skill.name}：{unavailableReason(skill)} 开关只改变启用状态，不会修复版本或依赖。
+        </p>
+      ))}
       {selectableSkills.length === 0 ? (
         <p className="empty">当前没有可用于对话的 Skill。到 Skill 页查看目录。</p>
       ) : null}
