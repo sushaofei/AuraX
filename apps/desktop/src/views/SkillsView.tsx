@@ -280,7 +280,12 @@ function CatalogPanel({ client }: { client: ClawClient }) {
           <div className="skill-detail-head"><span className="skill-avatar" aria-hidden="true">{selected.name.slice(0, 1).toUpperCase()}</span><div><p className="skill-muted">{selected.publisher} / Skill</p><h2>{selected.name}</h2><p>{selected.description}</p></div></div>
           <div className="skill-detail-layout"><div className="stack">
             <section className="skill-surface"><SkillSectionTitle number="01" title="技能说明" description="来自签名包中的 SKILL.md，了解技能的用途和使用方式。" />
-              {detail.isPending ? <p role="status">正在加载说明…</p> : detail.error ? <p className="error">{errorText(detail.error)}</p> : detail.data?.skill_markdown ? <MarkdownBody text={detail.data.skill_markdown} /> : <p className="skill-muted">此技能未提供 SKILL.md。</p>}
+              <button className="btn ghost" type="button" onClick={() => { void detail.refetch(); }} disabled={detail.isFetching}>
+                {detail.error ? "重试加载说明" : "刷新说明"}
+              </button>
+              {detail.isPending ? <p role="status">正在加载说明…</p> : detail.isFetching ? <p role="status">正在刷新说明…</p> : null}
+              {detail.error ? <p className="error" role="alert">{errorText(detail.error)}</p> : null}
+              {detail.data ? (detail.data.skill_markdown ? <MarkdownBody text={detail.data.skill_markdown} /> : <p className="skill-muted">此技能未提供 SKILL.md。</p>) : null}
             </section>
             <section className="skill-surface"><SkillSectionTitle number="02" title="能力依赖" description="技能声明的 Tool、Resource 与其他 Skill 依赖。" />
               {([['Tool', detail.data?.required_tools ?? selected.required_tools], ['Resource', detail.data?.required_resources ?? selected.required_resources], ['Skill', detail.data?.required_skills ?? selected.required_skills]] as const).map(([name, dependencies]) => <details className="skill-dependency" key={name}><summary>{name}<span className="skill-count">{dependencies.length}</span></summary>{dependencies.length ? dependencies.map((dependency, index) => <pre key={index}>{typeof dependency === "string" ? dependency : JSON.stringify(dependency, null, 2)}</pre>) : <p className="skill-muted">未声明 {name} 依赖。</p>}</details>)}
