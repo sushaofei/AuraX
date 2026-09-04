@@ -33,6 +33,7 @@ import { ExecutionTracePanel } from "../components/ExecutionTracePanel";
 import { MarkdownBody } from "../components/MarkdownBody";
 import { SkillSelector } from "../components/SkillSelector";
 import { errorText, isNotFound } from "../lib/errors";
+import { runtimeFailureLabel, runtimeFailureUsage } from "../lib/runtime-failure";
 
 const TERMINAL_RUN = new Set(["completed", "failed", "cancelled"]);
 
@@ -438,7 +439,10 @@ export function ChatView({
           ) : null}
           {runStatus === "failed" ? (
             <div className="card run-failure" role="alert">
-              <strong>本轮执行失败</strong>
+              <strong>{runtimeFailureLabel(runErrorCode)}</strong>
+              {runtimeFailureUsage(task.data?.error) ? (
+                <p>{runtimeFailureUsage(task.data?.error)}</p>
+              ) : null}
               {runErrorCode ? <p className="mono">{runErrorCode}</p> : null}
               <p className="error">{runErrorSummary ?? "执行未完成，请稍后重试或新开一轮。"}</p>
               <p className="mono">下方 transcript 保留会话历史，不代表本轮执行成功。</p>
