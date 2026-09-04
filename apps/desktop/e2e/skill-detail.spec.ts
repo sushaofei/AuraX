@@ -59,7 +59,8 @@ test("two independent clients can refresh the same updated Skill description", a
   } finally { await Promise.all(contexts.map((context) => context.close())); }
 });
 
-test("publishing a directory strips its root and refreshes an already cached description", async ({ page }) => {
+for (const staged of [false, true]) {
+test(`publishing a ${staged ? "staged" : "direct"} directory strips its root and refreshes an already cached description`, async ({ page }) => {
   const { mkdtemp, mkdir, writeFile, rm } = await import("node:fs/promises");
   const { tmpdir } = await import("node:os");
   const { join } = await import("node:path");
@@ -68,14 +69,19 @@ test("publishing a directory strips its root and refreshes an already cached des
   await mkdir(join(directory, "references"), { recursive: true });
   await writeFile(join(directory, "manifest.json"), JSON.stringify({ publisher: "acme", name: "revision-demo", version: "1.0.0" }));
   await writeFile(join(directory, "SKILL.md"), "# Published description");
-  await writeFile(join(directory, "references", "tools.md"), "Tool reference");
+  await writeFile(join(directory, "references", "tools.md"), staged ? "x".repeat(7 * 1024 * 1024) : "Tool reference");
   try {
     await mockClaw(page, { skillLifecycle: true });
     let published = false;
     let fileKeys: string[] = [];
     await page.route("**/v1/admin/skills/acme/revision-demo", (route) => route.fulfill({ json: { publisher: "acme", name: "revision-demo", skill_markdown: published ? "# Published description" : "# Cached description" } }));
+    await page.route("**/v1/admin/skill-package-uploads", async (route) => {
+      fileKeys = Object.keys(JSON.parse(route.request().postDataBuffer()!.toString()).files);
+      await route.fulfill({ status: 201, json: { artifact_ref: { artifact_id: "upload-fixture", version: 1 }, status: "ready" } });
+    });
     await page.route("**/v1/admin/skill-publications", async (route) => {
-      fileKeys = Object.keys(route.request().postDataJSON().files);
+      if (staged) expect(route.request().postDataJSON().artifact_ref.artifact_id).toBe("upload-fixture");
+      else fileKeys = Object.keys(route.request().postDataJSON().files);
       published = true;
       await route.fulfill({ json: { publisher: "acme", name: "revision-demo" } });
     });
@@ -90,3 +96,5 @@ test("publishing a directory strips its root and refreshes an already cached des
     expect(fileKeys.sort()).toEqual(["SKILL.md", "manifest.json", "references/tools.md"]);
   } finally { await rm(root, { recursive: true, force: true }); }
 });
+
+}
