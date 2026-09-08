@@ -520,6 +520,32 @@ describe("retireMcpServer", () => {
 });
 
 describe("mcpLifecycle", () => {
+  it("sends an explicit force flag for same-version schema reconciliation", async () => {
+    let body: unknown;
+    const client = new ClawClient({
+      baseUrl: "http://claw.example",
+      fetch: (async (_input, init) => {
+        body = JSON.parse(String(init?.body));
+        return jsonResponse({
+          operation_id: "op-force-reconcile",
+          server_id: "auramcp",
+          operation: "reconcile",
+          status: "succeeded",
+        });
+      }) as typeof fetch,
+    });
+
+    await mcpLifecycle(client, "auramcp", "reconcile", 1, "force-key", {
+      forceSchemaUpdate: true,
+    });
+
+    expect(body).toEqual({
+      server_id: "auramcp",
+      operation: "reconcile",
+      force_schema_update: true,
+    });
+  });
+
   it("treats HTTP 202 with status failed as an error", async () => {
     const client = new ClawClient({
       baseUrl: "http://claw.example",

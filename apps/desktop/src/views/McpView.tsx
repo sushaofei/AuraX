@@ -31,7 +31,11 @@ import { useState } from "react";
 import { errorText } from "../lib/errors";
 
 type LifecycleAction = Exclude<McpLifecycleAction, "retire" | "delete">;
-type LifecycleVariables = { server: McpServerRecord; action: LifecycleAction };
+type LifecycleVariables = {
+  server: McpServerRecord;
+  action: LifecycleAction;
+  forceSchemaUpdate?: boolean;
+};
 type LifecycleMutation = UseMutationResult<LifecycleAction, Error, LifecycleVariables>;
 
 const MCP_ACTION_LABEL: Record<LifecycleAction, string> = {
@@ -174,7 +178,14 @@ export function McpView({ client }: { client: ClawClient }) {
   });
   const act = useMutation<LifecycleAction, Error, LifecycleVariables>({
     mutationFn: async (input) => {
-      await mcpLifecycle(client, input.server.server_id, input.action, input.server.latest_revision);
+      await mcpLifecycle(
+        client,
+        input.server.server_id,
+        input.action,
+        input.server.latest_revision,
+        undefined,
+        input.forceSchemaUpdate ? { forceSchemaUpdate: true } : {},
+      );
       return input.action;
     },
     onSettled: (_data, _error, variables) => {
@@ -236,7 +247,13 @@ export function McpView({ client }: { client: ClawClient }) {
         onBack={closeEditor}
         onChange={setForm}
         onSave={() => save.mutate()}
-        onAction={(server, action) => act.mutate({ server, action })}
+        onAction={(server, action, forceSchemaUpdate) =>
+          act.mutate({
+            server,
+            action,
+            ...(forceSchemaUpdate ? { forceSchemaUpdate: true } : {}),
+          })
+        }
         onDelete={(server) => deleteServer.mutate(server)}
       />
     );
@@ -399,7 +416,11 @@ function McpEditor({
   onBack: () => void;
   onChange: (form: McpFormState) => void;
   onSave: () => void;
-  onAction: (server: McpServerRecord, action: LifecycleAction) => void;
+  onAction: (
+    server: McpServerRecord,
+    action: LifecycleAction,
+    forceSchemaUpdate?: boolean,
+  ) => void;
   onDelete: (server: McpServerRecord) => void;
 }) {
   return (
@@ -577,10 +598,15 @@ function McpServerOperations({
   server: McpServerRecord;
   lifecycle: LifecycleMutation;
   deleting: boolean;
-  onAction: (server: McpServerRecord, action: LifecycleAction) => void;
+  onAction: (
+    server: McpServerRecord,
+    action: LifecycleAction,
+    forceSchemaUpdate?: boolean,
+  ) => void;
   onDelete: (server: McpServerRecord) => void;
 }) {
   const [capabilitiesOpen, setCapabilitiesOpen] = useState(false);
+  const [confirmForceSync, setConfirmForceSync] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const capabilities = useQuery({
     queryKey: ["mcp-capabilities", client.baseUrl, server.server_id],
@@ -593,6 +619,10 @@ function McpServerOperations({
       ? lifecycle.variables.action
       : null;
   const retired = server.desired_state === "retired";
+  const schemaDrift =
+    server.catalog_publication?.last_sync_error === "CapabilitySchemaDriftError";
+  const forceSyncPending =
+    pendingAction === "reconcile" && lifecycle.variables?.forceSchemaUpdate === true;
   return (
     <section className="mcp-form-section mcp-operations">
       <div className="mcp-section-title">
@@ -617,6 +647,46 @@ function McpServerOperations({
         </button>
       </div>
       {lifecycle.error ? <p className="error">{errorText(lifecycle.error)}</p> : null}
+      {schemaDrift ? (
+        <div className="mcp-danger-zone">
+          <div>
+            <strong>强制同步最新 Schema</strong>
+            <p>仅在确认同版本变更兼容时使用。新目录会替换当前保留的上一版目录。</p>
+          </div>
+          {!confirmForceSync ? (
+            <button
+              className="btn danger ghost"
+              type="button"
+              disabled={lifecycle.isPending || deleting || retired}
+              onClick={() => setConfirmForceSync(true)}
+            >
+              {forceSyncPending ? "强制同步中…" : "强制同步"}
+            </button>
+          ) : (
+            <div className="row">
+              <button
+                className="btn danger"
+                type="button"
+                disabled={lifecycle.isPending || deleting || retired}
+                onClick={() => {
+                  setConfirmForceSync(false);
+                  onAction(server, "reconcile", true);
+                }}
+              >
+                确认强制同步
+              </button>
+              <button
+                className="btn ghost"
+                type="button"
+                disabled={lifecycle.isPending || deleting}
+                onClick={() => setConfirmForceSync(false)}
+              >
+                取消
+              </button>
+            </div>
+          )}
+        </div>
+      ) : null}
       {capabilitiesOpen ? (
         <CapabilityCatalog
           capabilities={capabilities.data?.capabilities ?? []}

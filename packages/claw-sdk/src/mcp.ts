@@ -26,7 +26,7 @@ export function mcpCatalogErrorMessage(code: string): string {
     ValueError: "能力目录校验失败，请查看同步诊断；不一定是历史数据问题。",
     CapabilityDescriptorDepthError: "能力 Schema 嵌套过深，超过目录安全限制。",
     CapabilityDescriptorSizeError: "能力描述过大，超过目录安全限制。",
-    CapabilitySchemaDriftError: "能力定义已变更但版本未更新，请升级 MCP 能力版本后重新同步。",
+    CapabilitySchemaDriftError: "能力定义已变更但版本未更新。建议升级能力版本；确认兼容时也可强制同步最新 Schema。",
     CapabilityAllowlistError: "发现的能力均不符合允许前缀，请检查服务器的能力白名单。",
     TimeoutError: "能力目录同步超时，请检查 MCP 服务和网络后重试。",
     PolicyDeniedError: "安全策略拒绝了目录访问，请检查权限和网络策略。",
@@ -304,6 +304,7 @@ export async function mcpLifecycle(
   action: McpLifecycleAction,
   expectedRevision: number,
   idempotencyKey = newIdempotencyKey(`mcp-${action}`),
+  options: { forceSchemaUpdate?: boolean } = {},
 ) {
   const response = await client.request<McpOperationRecord>(
     "POST",
@@ -312,6 +313,7 @@ export async function mcpLifecycle(
       json: {
         server_id: serverId,
         operation: action,
+        ...(options.forceSchemaUpdate ? { force_schema_update: true } : {}),
       },
       idempotencyKey,
       expectedRevision,

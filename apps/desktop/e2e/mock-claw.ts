@@ -8,6 +8,7 @@ export type ClawTraffic = {
   closes: number;
   closeReasons: string[];
   mcpActions: string[];
+  mcpForceSchemaUpdates: boolean[];
   mcpCapabilityInputs: Array<Record<string, unknown>>;
   approvals: number;
   approvalExpectedVersions: string[];
@@ -33,6 +34,7 @@ export async function mockClaw(
     closes: 0,
     closeReasons: [],
     mcpActions: [],
+    mcpForceSchemaUpdates: [],
     mcpCapabilityInputs: [],
     approvals: 0,
     approvalExpectedVersions: [],
@@ -228,9 +230,13 @@ export async function mockClaw(
       return;
     }
     if (url.pathname === "/v1/admin/mcp-servers/lifecycle") {
-      const body = route.request().postDataJSON() as { operation?: unknown } | null;
+      const body = route.request().postDataJSON() as {
+        operation?: unknown;
+        force_schema_update?: unknown;
+      } | null;
       const operation = typeof body?.operation === "string" ? body.operation : "";
       traffic.mcpActions.push(operation);
+      traffic.mcpForceSchemaUpdates.push(body?.force_schema_update === true);
       await json(
         {
           operation_id: `mcp-op-${operation}`,
