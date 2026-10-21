@@ -73,6 +73,7 @@ docker compose -f compose.master2.yml ps
 - 实际浏览器在 SSH 地址完成聊天与流式结果、执行轨迹、历史查询、单轮异步任务结果与自动结束；
   MCP/Skill 管理接口 200，空目录按真实空状态展示，不把错误伪装为无数据。
 - 完整 Playwright 回归 35 项通过，覆盖 390/760px 窄窗口及原有宽屏交互；修复主导航与轨迹挤压/裁切，对话与轨迹在窄窗口纵向排列。
+- 审批菜单截图使用 Playwright 独立输出目录，修复旧测试依赖 macOS `/private/tmp` 而在 Linux CI 失败的问题。
 - 最终 commit/构建摘要、容器、运行 ID 的证据保存在部署记录。
 
 2026-10-21 实际会话：聊天 `ses_9630a8c509e842ef9be2e1946b6dcc1c` 已完成；

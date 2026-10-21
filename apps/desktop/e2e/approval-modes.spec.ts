@@ -10,14 +10,14 @@ test.beforeEach(async ({ page }) => {
   });
 });
 
-test("chat defaults to human approval and persists an explicit automatic review choice", async ({ page }) => {
+test("chat defaults to human approval and persists an explicit automatic review choice", async ({ page }, testInfo) => {
   const traffic = await mockClaw(page);
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.goto("/");
   const view = page.locator(".view-panel:not(.view-hidden)");
   await view.getByRole("button", { name: "审批模式：请求批准", exact: true }).click();
   await expect(page.getByRole("menuitemradio", { name: /帮我批准/ })).toBeVisible();
-  await page.screenshot({ path: "/private/tmp/aurax-approval-menu.png" });
+  await page.screenshot({ path: testInfo.outputPath("approval-menu.png") });
   await page.getByRole("menuitemradio", { name: /帮我批准/ }).click();
   await view.getByLabel("消息", { exact: true }).fill("审核后读取敏感报告");
   await view.getByRole("button", { name: "开始", exact: true }).click();
