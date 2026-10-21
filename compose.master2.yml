@@ -19,7 +19,8 @@ services:
       AURAX_DEPT_ID: local-org
       AURAX_USER_ID: local-user
     volumes:
-      - ./deploy:/web:ro
+      - ./deploy/dev_web.py:/web/dev_web.py:ro
+      - ./deploy/evaluation_reports.py:/web/evaluation_reports.py:ro
       - ${AURAX_EVALUATION_DIR:-/data4/aurax-master2/evaluations}:/web-reports:ro
       - ./apps/desktop/dist:/web/html:ro
     secrets: [upstream_workload_token, agent_context_signing_keys_json]
