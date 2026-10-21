@@ -4,6 +4,11 @@ AuraX 是 AuraClaw 的 **macOS 工作台**：发命令、查投影、订 SSE、�
 
 展示名 **AuraX**。副标题可用「AuraClaw 工作台」。Bundle ID：`app.aurax.desktop`。
 
+## MASTER2 网页版
+
+已提供 SSH 隧道访问的开发网页部署；见 [MASTER2 网页部署与回滚](docs/master2-web.md)。
+后端签名凭据保留在服务器，受管网页只展示固定测试身份。
+
 ## v1 范围
 
 - 环境配置：可设置 AuraClaw base URL，以及测试请求使用的租户 ID、部门 ID、用户 ID；默认值为 `platform` / `local-org` / `local-user`。

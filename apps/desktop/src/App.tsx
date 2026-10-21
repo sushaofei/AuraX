@@ -1,4 +1,4 @@
-import { ClawClient } from "@aurax/claw-sdk";
+import { ClawClient, getManagedWebIdentity } from "@aurax/claw-sdk";
 import { useEffect, useMemo, useState } from "react";
 import {
   loadLastChatSessionId,
@@ -22,6 +22,9 @@ import { TaskView } from "./views/TaskView";
 type View = "chat" | "task" | "sessions" | "mcp" | "skills" | "settings";
 
 export function App() {
+  const managed = import.meta.env.VITE_AURAX_MANAGED_IDENTITY === "true";
+  const [identityReady, setIdentityReady] = useState(!managed);
+  const [identityError, setIdentityError] = useState<string | null>(null);
   const [view, setView] = useState<View>("chat");
   const [baseUrl, setBaseUrl] = useState(loadBaseUrl);
   const [identity, setIdentity] = useState(loadTestIdentity);
@@ -30,12 +33,30 @@ export function App() {
   const [taskSessionId, setTaskSessionId] = useState<string | null>(loadLastTaskSessionId);
 
   useEffect(() => {
+    if (!managed) return;
+    let active = true;
+    void getManagedWebIdentity(new ClawClient({ baseUrl: "" })).then((value) => {
+      if (active) {
+        setIdentity(value);
+        setIdentityReady(true);
+      }
+    }).catch(() => {
+      if (active) setIdentityError("无法加载工作台配置，请刷新页面重试。");
+    });
+    return () => { active = false; };
+  }, [managed]);
+
+  useEffect(() => {
     saveLastChatSessionId(chatSessionId);
   }, [chatSessionId]);
 
   useEffect(() => {
     saveLastTaskSessionId(taskSessionId);
   }, [taskSessionId]);
+
+  if (!identityReady) {
+    return <main className="stage"><p role="status">{identityError ?? "正在连接工作台…"}</p></main>;
+  }
 
   return (
     <div className="shell">
@@ -106,6 +127,7 @@ export function App() {
           <SettingsView
             baseUrl={baseUrl}
             identity={identity}
+            identityManaged={managed}
             onSaveBaseUrl={(url) => {
               saveBaseUrl(url);
               setBaseUrl(url);

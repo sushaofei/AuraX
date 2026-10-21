@@ -1,0 +1,46 @@
+# SSH-only development web. Uses the existing pinned AuraClaw Python runtime;
+# no Provider/database credentials or backend profile changes are required.
+name: aurax-master2
+services:
+  web:
+    image: ${AURAX_RUNTIME_IMAGE:?set the verified local AuraClaw image ID}
+    pull_policy: never
+    entrypoint: [python, /web/dev_web.py]
+    command: []
+    ports: ["127.0.0.1:1420:1420"]
+    environment:
+      AURAX_DEPLOYMENT_PROFILE: development
+      AURAX_STATIC_DIR: /web/html
+      AURACLAW_UPSTREAM: http://ingress:8080
+      AURAX_WORKLOAD_TOKEN_FILE: /run/secrets/upstream_workload_token
+      AURAX_SIGNING_KEYS_FILE: /run/secrets/agent_context_signing_keys_json
+      AURAX_TENANT_ID: platform
+      AURAX_DEPT_ID: local-org
+      AURAX_USER_ID: local-user
+    volumes:
+      - ./deploy/dev_web.py:/web/dev_web.py:ro
+      - ./apps/desktop/dist:/web/html:ro
+    secrets: [upstream_workload_token, agent_context_signing_keys_json]
+    networks: [edge]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs: ["/tmp:size=64m,nosuid,nodev"]
+    pids_limit: 128
+    mem_limit: 512m
+    cpus: 1
+    restart: unless-stopped
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:1420/health/live', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+secrets:
+  upstream_workload_token:
+    file: ${AURACLAW_SECRET_DIR:?existing deployment secret directory}/upstream_workload_token
+  agent_context_signing_keys_json:
+    file: ${AURACLAW_SECRET_DIR:?existing deployment secret directory}/agent_context_signing_keys_json
+networks:
+  edge:
+    external: true
+    name: auraclaw-e2-edge
