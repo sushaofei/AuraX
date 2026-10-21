@@ -57,3 +57,14 @@ def test_missing_attempt_retains_manifest_denominator(tmp_path):
     run = export_run(root)
     assert len(run.attempts) == 1
     assert len(run.task_ids) * run.trials == 2
+
+
+def test_omitted_manifest_defaults_match_explicit_record_defaults(tmp_path):
+    root = raw_run(tmp_path)
+    for path in root.glob("attempt_*.json"):
+        if path.name.endswith(".trace.json"):
+            continue
+        value = json.loads(path.read_text())
+        value["config"].update(user_model=None, user_provider=None)
+        path.write_text(json.dumps(value))
+    assert len(export_run(root).attempts) == 2

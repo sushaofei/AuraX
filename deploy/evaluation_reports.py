@@ -107,7 +107,8 @@ def export_run(root: Path) -> Run:
         if not re.fullmatch(r"attempt_\d+\.json", path.name):
             continue  # In particular, never open attempt_*.trace.json.
         record = json.loads(path.read_text())
-        if record["config"] != manifest["config"]:
+        record_config = Config.model_validate({k: record["config"][k] for k in Config.model_fields if k in record["config"]})
+        if record_config != config:
             raise ValueError("Mixed configurations")
         if record.get("schema_version", 1) != 1:
             raise ValueError("Unsupported attempt schema")
