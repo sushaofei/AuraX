@@ -4,6 +4,7 @@ import hashlib
 import hmac
 import importlib.util
 import json
+import sys
 from pathlib import Path
 
 import httpx
@@ -12,18 +13,20 @@ from fastapi.testclient import TestClient
 
 from auraclaw.infrastructure.identity import AgentContextSigner
 
+sys.path.insert(0, str(Path(__file__).parents[1] / "deploy"))
+
 spec = importlib.util.spec_from_file_location("dev_web", Path(__file__).parents[1] / "deploy/dev_web.py")
 web = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(web)
 IDENTITY = {"tenantId": "platform", "deptId": "local-org", "userId": "local-user"}
 
 
-def client(tmp_path, handler):
+def client(tmp_path, handler, evaluation_file=None):
     (tmp_path / "index.html").write_text("<title>AuraX</title>")
     app = web.create_app(
         static_dir=tmp_path, upstream_url="http://ingress:8080", identity=IDENTITY,
         workload_token="server-only", signer=AgentContextSigner(key_id="test", signing_key=b"k" * 32),
-        transport=httpx.MockTransport(handler),
+        transport=httpx.MockTransport(handler), evaluation_file=evaluation_file,
     )
     return TestClient(app, base_url="http://127.0.0.1:1420")
 
@@ -118,3 +121,20 @@ def test_production_profile_refused(monkeypatch):
     monkeypatch.setenv("AURAX_DEPLOYMENT_PROFILE", "production")
     with pytest.raises(SystemExit, match="development"):
         web.main()
+
+
+def test_evaluations_missing_invalid_and_fixed_identity(tmp_path):
+    path = tmp_path / "report.json"
+    with client(tmp_path, lambda request: response(), evaluation_file=path) as c:
+        assert c.get("/aurax/evaluations").status_code == 404
+        path.write_text('{"private_task":"DO-NOT-LEAK"}')
+        result = c.get("/aurax/evaluations")
+        assert result.status_code == 503
+        assert "DO-NOT-LEAK" not in result.text
+        path.write_text('{"schema_version":1,"exported_at":"2026-10-21T08:00:00Z","runs":[]}')
+        assert c.get("/aurax/evaluations").json()["runs"] == []
+        assert c.get("/aurax/evaluations", headers={"X-Tenant-ID": "other"}).status_code == 403
+        assert c.get("/aurax/evaluations", headers={"Origin": "https://evil.test"}).status_code == 403
+        value = json.loads(path.read_text()); value["raw_trace"] = "DO-NOT-LEAK"
+        path.write_text(json.dumps(value))
+        assert c.get("/aurax/evaluations").status_code == 503

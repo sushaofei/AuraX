@@ -21,6 +21,7 @@ from starlette.responses import JSONResponse, StreamingResponse
 from starlette.staticfiles import StaticFiles
 
 from auraclaw.infrastructure.identity import AgentContextSigner
+from evaluation_reports import Report
 
 IDENTITY_HEADERS = {"X-Tenant-ID": "tenantId", "X-Dept-ID": "deptId", "X-Actor-ID": "userId"}
 FORWARD_HEADERS = {
@@ -38,7 +39,8 @@ MAX_BODY = 16 * 1024 * 1024
 
 def create_app(*, static_dir: Path, upstream_url: str, identity: dict[str, str],
                workload_token: str, signer: AgentContextSigner,
-               transport: httpx.AsyncBaseTransport | None = None) -> FastAPI:
+               transport: httpx.AsyncBaseTransport | None = None,
+               evaluation_file: Path | None = None) -> FastAPI:
     upstream = urlsplit(upstream_url)
     if (upstream.scheme not in {"http", "https"} or not upstream.hostname
             or upstream.username or upstream.password or upstream.query or upstream.fragment
@@ -86,6 +88,21 @@ def create_app(*, static_dir: Path, upstream_url: str, identity: dict[str, str],
     @app.get("/aurax/environment")
     async def environment():
         return {"identity": identity, "mode": "server-fixed"}
+
+    @app.get("/aurax/evaluations")
+    async def evaluations(request: Request):
+        for header, field in IDENTITY_HEADERS.items():
+            if request.headers.get(header, identity[field]) != identity[field]:
+                return JSONResponse({"message": "此工作台使用固定测试身份"}, status_code=403)
+        if evaluation_file is None or not evaluation_file.exists():
+            return JSONResponse({"message": "尚未配置评测报告"}, status_code=404)
+        try:
+            if evaluation_file.stat().st_size > 8 * 1024 * 1024:
+                raise ValueError("Report too large")
+            report = Report.model_validate_json(evaluation_file.read_bytes())
+        except (OSError, ValueError):
+            return JSONResponse({"message": "评测报告暂时不可用，请联系管理员"}, status_code=503)
+        return report.model_dump(mode="json")
 
     @app.api_route("/v1/{path:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"])
     async def proxy(request: Request, path: str):
@@ -146,6 +163,7 @@ def main() -> None:
                   "userId": os.environ.get("AURAX_USER_ID", "local-user")},
         workload_token=Path(os.environ["AURAX_WORKLOAD_TOKEN_FILE"]).read_text().strip(),
         signer=AgentContextSigner(key_id=kid, signing_key=keys[kid].encode()),
+        evaluation_file=Path(os.environ["AURAX_EVALUATION_FILE"]) if os.environ.get("AURAX_EVALUATION_FILE") else None,
     )
     uvicorn.run(app, host="0.0.0.0", port=1420, access_log=False, proxy_headers=False)
 

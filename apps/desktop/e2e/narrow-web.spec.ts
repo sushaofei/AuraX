@@ -23,7 +23,7 @@ for (const width of [390, 760]) {
     expect(content).not.toBeNull();
     expect(details!.y).toBeGreaterThanOrEqual(content!.y + content!.height);
     expect(details!.width).toBeLessThanOrEqual(width);
-    for (const view of ["任务", "历史", "MCP", "Skill", "配置"]) {
+    for (const view of ["任务", "历史", "MCP", "Skill", "评测", "配置"]) {
       await page.locator("nav").getByRole("button", { name: view, exact: true }).click();
       await checkOverflow();
     }

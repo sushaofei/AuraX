@@ -10,6 +10,7 @@ services:
     ports: ["127.0.0.1:1420:1420"]
     environment:
       AURAX_DEPLOYMENT_PROFILE: development
+      AURAX_EVALUATION_FILE: /web-reports/report.json
       AURAX_STATIC_DIR: /web/html
       AURACLAW_UPSTREAM: http://ingress:8080
       AURAX_WORKLOAD_TOKEN_FILE: /run/secrets/upstream_workload_token
@@ -18,7 +19,8 @@ services:
       AURAX_DEPT_ID: local-org
       AURAX_USER_ID: local-user
     volumes:
-      - ./deploy/dev_web.py:/web/dev_web.py:ro
+      - ./deploy:/web:ro
+      - ${AURAX_EVALUATION_DIR:-/data4/aurax-master2/evaluations}:/web-reports:ro
       - ./apps/desktop/dist:/web/html:ro
     secrets: [upstream_workload_token, agent_context_signing_keys_json]
     networks: [edge]

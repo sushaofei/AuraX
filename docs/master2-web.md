@@ -83,3 +83,42 @@ MCP/Skill 目录为空，本次没有凭空注册外部系统、发布技能或�
 
 此部署仍是开发环境。既有 AuraClaw 供应链生产发布门禁不由网页验证解除，
 这套接入层不改变其生产身份/依赖政策。
+
+## 评测结果展示（2026-10-21）
+
+导航“评测”通过 SDK 读取同源 `GET /aurax/evaluations`，只读展示已发布的运行，
+不启动评测或自动调度。当前范围是固定测试工作台内的 dev 联调，不能作为完整基准排行榜。
+SDK 与界面独立于 benchmark 执行器，AuraClaw 生产入口不导入 evaluation 包，不增加数据库耦合。
+
+发布器 `deploy/evaluation_reports.py` 在评测宿主上显式选择 run 目录，
+仅打开 manifest 与严格匹配的 `attempt_数字.json`，从字段白名单构造公开报告。
+不打开 trace，不发布任务正文、答案、完整 usage、异常文本、环境地址或凭据。
+任务 ID 仅用于核对样本，保留失败记录；缺失尝试的分母来自 manifest，未完成运行不显示成功率。
+配置混用、重复 task/trial、非法数值或版本会阻止发布，旧报告保留。
+报告 `schema_version=1`，每轮独立保存配置、上游版本、数据指纹与执行 profile，支持任意 benchmark 名称。
+新增执行器仍需分别开发，不因可显示新名称就宣称已接入该基准。
+
+在 MASTER2 使用**已验证运行时**发布两个现有 E2 最终 run（没有新模型调用）：
+
+```bash
+mkdir -p /data4/aurax-master2/evaluations
+# 在 AuraClaw runtime 内执行此发布器，挂载原始目录供一次性导出；Web 本身不挂载原始目录。
+python deploy/evaluation_reports.py \
+  --run /private-results/eval_4a8ae70da446439795a4b3eb83007c12 \
+  --run /private-results/eval_89aa41a3dc1749baa8023276e9dfb2b7 \
+  --output /published/report.json
+```
+
+实际部署时目录先由管理员创建；一次性导出容器使用 root 读取原本 root-only 的原始文件，
+设置 network=none、只读根、cap-drop ALL，仅公开输出目录可写，不改变原始文件权限。
+Web 服务继续以 non-root 运行。
+Web 只读挂载 `${AURAX_EVALUATION_DIR:-/data4/aurax-master2/evaluations}`，
+接入层再次执行严格 schema 验证，出现未知字段也拒绝返回，防止误将原始记录作为公开报告。
+文件不存在返回 404，格式损坏返回 503（无私有内容）；页面区分未接入、真实空集合、加载失败及旧缓存。
+没有客户端文件路径参数，固定部署身份、同源与 localhost 限制同样适用。
+当前是 SSH 开发部署接口，未作为生产/跨租户报告 API；生产化需另行建立授权和报告发布流程。
+
+初始报告应为 τ-bench retail dev **1/2**、AppWorld dev **2/2**，共四次尝试，执行异常零次。
+模型 `qwen3.5-122b-a10b` 是别名，未验证不可变快照，总费用未知；不提供完整 SGC 或稳定 pass^k 结论。
+页面导入时间是报告生成时间，不冒充评测执行时间；刷新只重读已发布报告，不触发重新评测。
+更新报告需重新显式导出并原子替换。Web 回滚不会删除已发布报告。

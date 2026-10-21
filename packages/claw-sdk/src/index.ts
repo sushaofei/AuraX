@@ -13,3 +13,4 @@ export * from "./streams.js";
 export * from "./tasks.js";
 export * from "./web-environment.js";
 export type * from "./types.js";
+export * from "./evaluations.js";

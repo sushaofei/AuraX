@@ -13,13 +13,14 @@ import {
   saveTestIdentity,
 } from "./connection";
 import { ChatView } from "./views/ChatView";
+import { EvaluationsView } from "./views/EvaluationsView";
 import { McpView } from "./views/McpView";
 import { SessionsView } from "./views/SessionsView";
 import { SettingsView } from "./views/SettingsView";
 import { SkillsView } from "./views/SkillsView";
 import { TaskView } from "./views/TaskView";
 
-type View = "chat" | "task" | "sessions" | "mcp" | "skills" | "settings";
+type View = "chat" | "task" | "sessions" | "mcp" | "skills" | "evaluations" | "settings";
 
 export function App() {
   const managed = import.meta.env.VITE_AURAX_MANAGED_IDENTITY === "true";
@@ -71,6 +72,7 @@ export function App() {
               ["sessions", "历史"],
               ["mcp", "MCP"],
               ["skills", "Skill"],
+              ["evaluations", "评测"],
               ["settings", "配置"],
             ] as const
           ).map(([id, label]) => (
@@ -123,6 +125,7 @@ export function App() {
         ) : null}
         {view === "mcp" ? <McpView client={client} /> : null}
         {view === "skills" ? <SkillsView client={client} /> : null}
+        {view === "evaluations" ? <EvaluationsView client={client} /> : null}
         {view === "settings" ? (
           <SettingsView
             baseUrl={baseUrl}
