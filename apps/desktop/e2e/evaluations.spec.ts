@@ -24,6 +24,10 @@ for (const width of [390, 760, 1440]) {
     await expect(page.getByText("100.0%", { exact: true })).toBeVisible();
     await expect(page.getByText("1 / 2 次尝试成功")).toBeVisible();
     const tau = page.locator(".evaluation-card").filter({ has: page.getByRole("heading", { name: "τ-bench", exact: true }) });
+    const source = tau.getByRole("link", { name: "τ-bench 官方文档（新窗口）", exact: true });
+    await expect(source).toHaveAttribute("href", "https://github.com/sierra-research/tau-bench");
+    await expect(source).toHaveAttribute("target", "_blank");
+    await expect(source).toHaveAttribute("rel", "noopener noreferrer");
     await tau.locator(".evaluation-samples summary").click();
     await expect(tau.getByText("任务未通过", { exact: true })).toBeVisible();
     await tau.locator(".evaluation-provenance summary").click();
@@ -32,6 +36,7 @@ for (const width of [390, 760, 1440]) {
     await page.getByLabel("基准", { exact: true }).selectOption("appworld");
     await expect(page.locator(".evaluation-card")).toHaveCount(1);
     await expect(page.getByRole("heading", { name: "AppWorld", exact: true })).toBeVisible();
+    await expect(page.getByRole("link", { name: "AppWorld 官方文档（新窗口）", exact: true })).toHaveAttribute("href", "https://github.com/StonyBrookNLP/appworld");
   });
 }
 test("missing, invalid, empty and refreshed reports stay distinct", async ({ page }) => {

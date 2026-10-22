@@ -10,6 +10,8 @@
 .evaluation-card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
 .evaluation-card h2 { margin: 0; font-size: 22px; font-weight: 650; letter-spacing: -.025em; }
 .evaluation-card-head p { max-width: 680px; margin: 7px 0 0; font-size: 12px; color: #656c74; line-height: 1.7; }
+.evaluation-source { display: inline-block; margin-top: 8px; font-size: 12px; color: #48596d; text-decoration: underline; text-underline-offset: 3px; }
+.evaluation-source:hover { color: #252a30; }
 .evaluation-status { white-space: nowrap; padding: 4px 8px; border: 1px solid #d9e2dc; border-radius: 3px; font-size: 11px; color: #45664e; background: #f6f9f6; }
 .evaluation-status.pending { border-color: #e4dbc7; color: #806233; background: #fcfaf4; }
 .evaluation-metrics { display: grid; grid-template-columns: 1.25fr 1fr 1fr 1fr; margin: 26px 0 22px; gap: 20px; }

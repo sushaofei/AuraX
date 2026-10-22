@@ -9,6 +9,10 @@ const benchmarkDescription = (name: string) => ({
   "tau-bench": "通过多轮用户对话与工具调用，评估任务完成、业务规则遵循及重复执行的一致性。",
   appworld: "在多应用交互环境中，通过编程与 API 调用完成任务，评估跨应用操作与任务目标完成情况。",
 } as Record<string, string>)[name];
+const benchmarkUrl = (name: string) => ({
+  "tau-bench": "https://github.com/sierra-research/tau-bench",
+  appworld: "https://github.com/StonyBrookNLP/appworld",
+} as Record<string, string>)[name];
 const percent = (value: number) => `${(value * 100).toFixed(1)}%`;
 function RunCard({ run }: { run: EvaluationRun }) {
   const stats = evaluationStats(run), c = run.config;
@@ -16,7 +20,7 @@ function RunCard({ run }: { run: EvaluationRun }) {
   const mean = timed.length ? `${(timed.reduce((a, b) => a + b, 0) / timed.length).toFixed(1)} s` : "—";
   return <article className="evaluation-card">
     <header className="evaluation-card-head">
-      <div><h2>{benchmarkName(c.benchmark)}</h2>{benchmarkDescription(c.benchmark) ? <p>{benchmarkDescription(c.benchmark)}</p> : null}{run.validation_scope === "fixture" ? <p>测试数据 · 不计基准成绩</p> : null}</div>
+      <div><h2>{benchmarkName(c.benchmark)}</h2>{benchmarkDescription(c.benchmark) ? <p>{benchmarkDescription(c.benchmark)}</p> : null}{benchmarkUrl(c.benchmark) ? <a className="evaluation-source" href={benchmarkUrl(c.benchmark)} target="_blank" rel="noopener noreferrer" aria-label={`${benchmarkName(c.benchmark)} 官方文档（新窗口）`}>官方文档 <span aria-hidden="true">↗</span></a> : null}{run.validation_scope === "fixture" ? <p>测试数据 · 不计基准成绩</p> : null}</div>
       <span className={`evaluation-status${stats.complete ? "" : " pending"}`}>{stats.complete ? "已完成" : `未完成 · 缺 ${stats.missing} 次`}</span>
     </header>
     <div className="evaluation-metrics">
