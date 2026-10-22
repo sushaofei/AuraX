@@ -48,3 +48,46 @@ describe("evaluation artifacts", () => {
     },
   );
 });
+
+describe("E3 repeated holdout reports", () => {
+  it("computes all-success consistency separately from any-success", async () => {
+    const base = report().runs[0]!;
+    const run = { ...base, protocol: "e3-heldout-v1", trials: 3,
+      attempts: [0, 1].flatMap((task) => [0, 1, 2].map((trial) => ({ ...base.attempts[0]!, task_id: String(task), trial,
+        success: task === 1 || trial < 2, official_reward: task === 1 || trial < 2 ? 1 : 0 }))) };
+    const parsed = (await getEvaluations(client({ ...report(), runs: [run] }))).runs[0]!;
+    const { evaluationConsistency } = await import("./evaluations.js");
+    expect(evaluationConsistency(parsed).map((p) => p.value)).toEqual([
+      expect.closeTo(5 / 6), expect.closeTo(2 / 3), 0.5,
+    ]);
+    parsed.attempts.pop();
+    expect(evaluationConsistency(parsed)).toEqual([]);
+  });
+  it("validates independently graded complete scenarios and rejects inflated metrics", async () => {
+    const base = report().runs[0]!;
+    const run = { ...base, protocol: "e3-heldout-v1", trials: 3,
+      config: { ...base.config, benchmark: "appworld", domain: null }, task_ids: ["family_1", "family_2", "family_3"],
+      attempts: [1, 2, 3].flatMap((task) => [0, 1, 2].map((trial) => ({ ...base.attempts[0]!, task_id: `family_${task}`, trial,
+        success: task < 3, official_reward: task < 3 ? 1 : 0 }))),
+      official_metrics: [0, 1, 2].map((trial) => ({ trial, tasks: 3, scenarios: 1, task_goal_completion: 0.667, scenario_goal_completion: 0 })),
+    };
+    const value = { ...report(), runs: [run] };
+    expect((await getEvaluations(client(value))).runs[0]!.official_metrics).toHaveLength(3);
+    run.official_metrics[0]!.scenario_goal_completion = 1;
+    await expect(getEvaluations(client(value))).rejects.toThrow("格式无效");
+  });
+});
+
+it("keeps a crashed attempt unsuccessful while accepting its independent final-state grade", async () => {
+  const base = report().runs[0]!;
+  const attempts = [1, 2, 3].flatMap((task) => [0, 1, 2].map((trial) => ({ ...base.attempts[0]!, task_id: `family_${task}`, trial,
+    success: task < 3, official_reward: task < 3 ? 1 : 0 })));
+  const run = { ...base, protocol: "e3-heldout-v1", trials: 3, config: { ...base.config, benchmark: "appworld", domain: null },
+    task_ids: ["family_1", "family_2", "family_3"],
+    attempts: attempts.map((a, i) => i === 8 ? { ...a, status: "runtime_error", official_reward: null, independent_reward: 0 } : a),
+    official_metrics: [0, 1, 2].map((trial) => ({ trial, tasks: 3, scenarios: 1, task_goal_completion: 0.667, scenario_goal_completion: 0 })),
+  };
+  const parsed = (await getEvaluations(client({ ...report(), runs: [run] }))).runs[0]!;
+  expect(parsed.attempts[8]).toMatchObject({ status: "runtime_error", success: false, official_reward: null, independent_reward: 0 });
+  expect(evaluationStats(parsed)).toMatchObject({ success: 6, errors: 1, expected: 9 });
+});

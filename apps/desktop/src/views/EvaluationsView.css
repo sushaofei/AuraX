@@ -19,3 +19,6 @@
 .evaluation-config dt { color: #756c63; margin-top: 12px; }
 .evaluation-config dd { margin: 0; }
 @media (max-width: 540px) { .evaluation-card { padding: 18px; } .evaluation-metrics strong { font-size: 26px; } }
+
+.evaluation-repeat { border-top: 1px solid #ded6ca; border-bottom: 1px solid #ded6ca; padding: 12px 0; line-height: 1.7; }
+.evaluation-repeat ul { padding-left: 20px; font-size: 13px; }

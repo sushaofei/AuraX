@@ -57,3 +57,22 @@ test("missing, invalid, empty and refreshed reports stay distinct", async ({ pag
   await expect(page.getByText("样本未跑完，缺 1 次", { exact: false })).toBeVisible();
   await expect(page.getByText("50%", { exact: true })).toHaveCount(0);
 });
+
+test("E3 labels repeated holdouts and shows independently verified subset scene scores", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 820 });
+  await mockClaw(page);
+  const base = report().runs[1]!;
+  const run = { ...base, protocol: "e3-heldout-v1", trials: 3, task_ids: ["family_1", "family_2", "family_3"],
+    attempts: [1, 2, 3].flatMap((task) => [0, 1, 2].map((trial) => ({ ...base.attempts[0]!, task_id: `family_${task}`, trial,
+      success: task < 3, official_reward: task < 3 ? 1 : 0 }))),
+    official_metrics: [0, 1, 2].map((trial) => ({ trial, tasks: 3, scenarios: 1, task_goal_completion: 0.667, scenario_goal_completion: 0 })),
+  };
+  await page.route("**/aurax/evaluations", (route) => route.fulfill({ json: { ...report(), runs: [run] } }));
+  await page.goto("/");
+  await page.getByRole("button", { name: "评测", exact: true }).click();
+  await expect(page.locator(".evaluation-tag").getByText("E3 受控基线", { exact: false })).toBeVisible();
+  await expect(page.getByText("pass^3", { exact: false })).toBeVisible();
+  await expect(page.getByText("第 1 次：TGC 66.7% / SGC 0.0%", { exact: false })).toBeVisible();
+  await expect(page.getByText("6 / 9 次计划尝试成功")).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+});
