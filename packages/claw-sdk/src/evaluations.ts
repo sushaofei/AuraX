@@ -2,13 +2,14 @@ import type { ClawClient } from "./client.js";
 
 export interface EvaluationAttempt {
   task_id: string; trial: number; status: string; success: boolean;
-  independent_reward: number | null; official_reward: number | null; elapsed_seconds: number | null;
+  episode_success: boolean | null; independent_reward: number | null; official_reward: number | null; elapsed_seconds: number | null;
   model_calls: number | null; tool_calls: number | null; dataset_revision_verified: boolean;
 }
 export interface OfficialEvaluationTrial {
   trial: number; tasks: number; scenarios: number; task_goal_completion: number; scenario_goal_completion: number;
 }
 export interface EvaluationRun {
+  scoring_basis: "episode" | "post-close-official"; scoring_adjustments: number; verifier_revision: string | null;
   protocol: "e3-heldout-v1" | null; official_metrics: OfficialEvaluationTrial[] | null;
   run_id: string; scope: "development"; validation_scope: "official-sdk-adapter" | "fixture";
   model_snapshot_verified: false; total_cost: null;
@@ -20,7 +21,7 @@ export interface EvaluationRun {
   };
   harness_profile: string; upstream_revision: string | null; task_ids: string[]; trials: number; attempts: EvaluationAttempt[];
 }
-export interface EvaluationReport { schema_version: 1; exported_at: string; runs: EvaluationRun[] }
+export interface EvaluationReport { schema_version: 1 | 2; exported_at: string; runs: EvaluationRun[] }
 const statuses = ["completed", "incomplete", "budget_exhausted", "infra_error", "runtime_error", "evaluation_error", "timeout"];
 function requireValue(value: boolean): asserts value {
   if (!value) throw new Error("评测报告格式无效，请联系管理员");
@@ -45,6 +46,10 @@ function parseRun(value: unknown): EvaluationRun {
   const r = object(value), c = object(r.config);
   requireValue(r.protocol === undefined || r.protocol === null || r.protocol === "e3-heldout-v1");
   const protocol = r.protocol ?? null;
+  const scoring_basis = r.scoring_basis ?? "episode";
+  requireValue(scoring_basis === "episode" || scoring_basis === "post-close-official");
+  const scoring_adjustments = r.scoring_adjustments === undefined ? 0 : number(r.scoring_adjustments, true);
+  const verifier_revision = r.verifier_revision === undefined || r.verifier_revision === null ? null : revision(r.verifier_revision);
   let official_metrics: OfficialEvaluationTrial[] | null = null;
   if (r.official_metrics !== undefined && r.official_metrics !== null) {
     requireValue(Array.isArray(r.official_metrics));
@@ -66,13 +71,15 @@ function parseRun(value: unknown): EvaluationRun {
     const a = object(item), task_id = text(a.task_id), trial = number(a.trial, true), status = text(a.status);
     const key = JSON.stringify([task_id, trial]), success = boolean(a.success), reward = nullableNumber(a.official_reward);
     requireValue(task_ids.includes(task_id) && trial < trials && !identities.has(key) && statuses.includes(status));
-    requireValue((reward === null || reward <= 1) && (!success || (status === "completed" && reward === 1)));
+    const independent = a.independent_reward === undefined ? null : nullableNumber(a.independent_reward);
+    const goal = independent ?? reward;
+    requireValue((reward === null || reward <= 1) && (!success || (status === "completed" && goal === 1)));
     if (a.independent_reward !== undefined && a.independent_reward !== null) {
       const independent = number(a.independent_reward);
-      requireValue((independent === 0 || independent === 1) && (reward === null || independent === reward));
+      requireValue((independent === 0 || independent === 1) && (scoring_basis === "post-close-official" || reward === null || independent === reward));
     }
     identities.add(key);
-    return { task_id, trial, status, success, official_reward: reward, independent_reward: a.independent_reward === undefined ? null : nullableNumber(a.independent_reward), elapsed_seconds: nullableNumber(a.elapsed_seconds),
+    return { task_id, trial, status, success, episode_success: a.episode_success === undefined || a.episode_success === null ? null : boolean(a.episode_success), official_reward: reward, independent_reward: a.independent_reward === undefined ? null : nullableNumber(a.independent_reward), elapsed_seconds: nullableNumber(a.elapsed_seconds),
       model_calls: nullableNumber(a.model_calls, true), tool_calls: nullableNumber(a.tool_calls, true),
       dataset_revision_verified: boolean(a.dataset_revision_verified) };
   });
@@ -96,17 +103,22 @@ function parseRun(value: unknown): EvaluationRun {
       requireValue(Math.abs(tgc - m.task_goal_completion) < 1e-9 && Math.abs(sgc - m.scenario_goal_completion) < 1e-9);
     }
   }
+  if (scoring_basis === "post-close-official") {
+    requireValue(official_metrics !== null && verifier_revision !== null && attempts.every((a) => a.independent_reward !== null && a.episode_success !== null));
+    requireValue(scoring_adjustments === attempts.filter((a) => a.success !== a.episode_success).length);
+    requireValue(attempts.every((a) => a.success === (a.status === "completed" && a.independent_reward === 1)));
+  } else requireValue(scoring_adjustments === 0);
   const run_id = text(r.run_id); requireValue(/^eval_[a-f0-9]{32}$/.test(run_id));
-  return { protocol: protocol as EvaluationRun["protocol"], official_metrics, run_id, scope: r.scope, validation_scope: r.validation_scope, model_snapshot_verified: false, total_cost: null,
+  return { scoring_basis, scoring_adjustments, verifier_revision, protocol: protocol as EvaluationRun["protocol"], official_metrics, run_id, scope: r.scope, validation_scope: r.validation_scope, model_snapshot_verified: false, total_cost: null,
     config, harness_profile: text(r.harness_profile), upstream_revision: r.upstream_revision === null ? null : revision(r.upstream_revision), task_ids, trials, attempts };
 }
 export async function getEvaluations(client: ClawClient): Promise<EvaluationReport> {
   const { body } = await client.request<unknown>("GET", "/aurax/evaluations");
   const report = object(body);
-  requireValue(report.schema_version === 1 && typeof report.exported_at === "string" && Number.isFinite(Date.parse(report.exported_at)) && Array.isArray(report.runs));
+  requireValue((report.schema_version === 1 || report.schema_version === 2) && typeof report.exported_at === "string" && Number.isFinite(Date.parse(report.exported_at)) && Array.isArray(report.runs));
   const runs = report.runs.map(parseRun);
   requireValue(new Set(runs.map((run) => run.run_id)).size === runs.length);
-  return { schema_version: 1, exported_at: report.exported_at, runs };
+  return { schema_version: report.schema_version, exported_at: report.exported_at, runs };
 }
 export function evaluationStats(run: EvaluationRun) {
   const expected = run.task_ids.length * run.trials;

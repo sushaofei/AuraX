@@ -55,6 +55,7 @@ class Attempt(PublicModel):
         "timeout",
     ]
     success: bool = Field(strict=True)
+    episode_success: bool | None = Field(default=None, strict=True)
     official_reward: Annotated[float, Field(ge=0, le=1, allow_inf_nan=False)] | None
     independent_reward: (
         Annotated[float, Field(ge=0, le=1, allow_inf_nan=False)] | None
@@ -68,7 +69,12 @@ class Attempt(PublicModel):
     def consistent_success(self):
         if self.independent_reward not in {None, 0, 1}:
             raise ValueError("Independent task goal grade must be binary")
-        if self.success and (self.status != "completed" or self.official_reward != 1):
+        goal = (
+            self.independent_reward
+            if self.independent_reward is not None
+            else self.official_reward
+        )
+        if self.success and (self.status != "completed" or goal != 1):
             raise ValueError("Inconsistent successful attempt")
         return self
 
@@ -85,6 +91,9 @@ class Run(PublicModel):
     run_id: Annotated[str, Field(pattern=r"^eval_[a-f0-9]{32}$")]
     protocol: Literal["e3-heldout-v1"] | None = None
     official_metrics: list[OfficialTrial] | None = None
+    scoring_basis: Literal["episode", "post-close-official"] = "episode"
+    scoring_adjustments: Count = 0
+    verifier_revision: Revision | None = None
     scope: Literal["development"]
     validation_scope: Literal["official-sdk-adapter", "fixture"]
     model_snapshot_verified: Literal[False]
@@ -113,13 +122,36 @@ class Run(PublicModel):
             identities.add(key)
         if self.protocol and (self.config.split != "dev" or self.trials != 3):
             raise ValueError("Invalid E3 protocol")
-        if any(
+        if self.scoring_basis == "episode" and any(
             a.independent_reward is not None
             and a.official_reward is not None
             and a.independent_reward != a.official_reward
             for a in self.attempts
         ):
             raise ValueError("Independent grading disagrees with recorded reward")
+        if self.scoring_basis == "post-close-official":
+            if (
+                self.official_metrics is None
+                or self.verifier_revision is None
+                or any(
+                    a.independent_reward is None or a.episode_success is None
+                    for a in self.attempts
+                )
+            ):
+                raise ValueError("Final judgments require complete official provenance")
+            if self.scoring_adjustments != sum(
+                a.episode_success != a.success for a in self.attempts
+            ):
+                raise ValueError("Incorrect scoring adjustment count")
+            if any(
+                a.success != (a.status == "completed" and a.independent_reward == 1)
+                for a in self.attempts
+            ):
+                raise ValueError(
+                    "Final success must follow official goal and Runtime completion"
+                )
+        elif self.scoring_adjustments:
+            raise ValueError("Only final judgments can adjust episode scores")
         if self.official_metrics is not None:
             if self.config.benchmark != "appworld":
                 raise ValueError("Scene metrics require AppWorld")
@@ -173,7 +205,7 @@ class Run(PublicModel):
 
 
 class Report(PublicModel):
-    schema_version: Literal[1]
+    schema_version: Literal[1, 2]
     exported_at: datetime
     runs: list[Run] = Field(max_length=1000)
 
@@ -228,6 +260,9 @@ def export_run(root: Path) -> Run:
     if len(scopes) != 1 or len(revisions) > 1 or len(profiles) > 1:
         raise ValueError("Missing or mixed run provenance")
     official = None
+    scoring_basis = "episode"
+    scoring_adjustments = 0
+    verifier_revision = None
     if (root / "official-metrics.json").exists():
         receipt = json.loads((root / "official-metrics.json").read_text())
         if receipt.get("verified") is not True:
@@ -249,13 +284,34 @@ def export_run(root: Path) -> Run:
                 grades[key] = row["reward"]
             if set(grades) != {(a.task_id, a.trial) for a in attempts}:
                 raise ValueError("Independent grading coverage mismatch")
+            final_basis = (
+                receipt.get("verification_basis") == "two-post-close-official-graders"
+            )
+            if final_basis:
+                scoring_basis = "post-close-official"
+                verifier_revision = receipt["verifier_revision"]
+                scoring_adjustments = receipt["episode_success_adjustments"]
             attempts = [
                 a.model_copy(
-                    update={"independent_reward": grades[(a.task_id, a.trial)]}
+                    update={
+                        "independent_reward": grades[(a.task_id, a.trial)],
+                        "episode_success": a.success
+                        if final_basis
+                        else a.episode_success,
+                        "success": (
+                            a.status == "completed"
+                            and grades[(a.task_id, a.trial)] == 1
+                        )
+                        if final_basis
+                        else a.success,
+                    }
                 )
                 for a in attempts
             ]
     return Run(
+        scoring_basis=scoring_basis,
+        scoring_adjustments=scoring_adjustments,
+        verifier_revision=verifier_revision,
         protocol=manifest.get("protocol"),
         official_metrics=official,
         run_id=root.name,
@@ -277,7 +333,7 @@ def main():
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     report = Report(
-        schema_version=1,
+        schema_version=2,
         exported_at=datetime.now(timezone.utc),
         runs=[export_run(root) for root in args.run],
     )

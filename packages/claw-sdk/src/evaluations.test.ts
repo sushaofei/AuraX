@@ -43,7 +43,7 @@ describe("evaluation artifacts", () => {
       if (kind === "foreign-task") run.attempts[0]!.task_id = "unexpected";
       if (kind === "invalid-number") run.attempts[0]!.elapsed_seconds = -1;
       if (kind === "inconsistent-success") run.attempts[0]!.official_reward = 0;
-      if (kind === "schema") value.schema_version = 2;
+      if (kind === "schema") value.schema_version = 3;
       await expect(getEvaluations(client(value))).rejects.toThrow("评测报告格式无效");
     },
   );
@@ -90,4 +90,21 @@ it("keeps a crashed attempt unsuccessful while accepting its independent final-s
   const parsed = (await getEvaluations(client({ ...report(), runs: [run] }))).runs[0]!;
   expect(parsed.attempts[8]).toMatchObject({ status: "runtime_error", success: false, official_reward: null, independent_reward: 0 });
   expect(evaluationStats(parsed)).toMatchObject({ success: 6, errors: 1, expected: 9 });
+});
+
+it("accepts v2 final goal judgments while preserving and explaining live diagnostics", async () => {
+  const base = report().runs[0]!;
+  const run = { ...base, protocol: "e3-heldout-v1", trials: 3, scoring_basis: "post-close-official", scoring_adjustments: 6, verifier_revision: "a".repeat(40),
+    config: { ...base.config, benchmark: "appworld", domain: null }, task_ids: ["family_1", "family_2", "family_3"],
+    attempts: [1, 2, 3].flatMap((task) => [0, 1, 2].map((trial) => ({ ...base.attempts[0]!, task_id: `family_${task}`, trial,
+      success: task === 1, episode_success: true, official_reward: 1, independent_reward: task === 1 ? 1 : 0 }))),
+    official_metrics: [0, 1, 2].map((trial) => ({ trial, tasks: 3, scenarios: 1, task_goal_completion: 0.333, scenario_goal_completion: 0 })),
+  };
+  const value = { ...report(), schema_version: 2, runs: [run] };
+  const parsed = await getEvaluations(client(value));
+  expect(parsed.schema_version).toBe(2);
+  expect(evaluationStats(parsed.runs[0]!)).toMatchObject({ success: 3, rate: 1 / 3 });
+  expect(parsed.runs[0]!.attempts[8]).toMatchObject({ success: false, episode_success: true, official_reward: 1, independent_reward: 0 });
+  run.scoring_adjustments = 0;
+  await expect(getEvaluations(client(value))).rejects.toThrow("格式无效");
 });

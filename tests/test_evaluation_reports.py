@@ -207,3 +207,35 @@ def test_independent_regrade_preserves_runtime_error_and_unknown_primary_reward(
         and not failed.success
     )
     assert run.official_metrics[2].scenario_goal_completion == 0
+
+
+def test_post_close_final_judgments_correct_only_the_published_projection(tmp_path):
+    root = raw_run(tmp_path)
+    receipt = e3_world(root)
+    rewards = []
+    for path in root.iterdir():
+        if path.name.endswith(".trace.json") or not path.name.startswith("attempt_"):
+            continue
+        row = json.loads(path.read_text())
+        rewards.append(
+            dict(
+                task_id=row["task_id"],
+                trial=row["trial"],
+                reward=row["official_reward"],
+            )
+        )
+        row.update(success=True, official_reward=1)
+        path.write_text(json.dumps(row))
+    receipt.update(
+        verification_basis="two-post-close-official-graders",
+        verifier_revision="a" * 40,
+        episode_success_adjustments=3,
+        regraded_rewards=rewards,
+    )
+    (root / "official-metrics.json").write_text(json.dumps(receipt))
+    before = {p.name: p.read_bytes() for p in root.glob("attempt_*.json")}
+    run = export_run(root)
+    assert run.scoring_basis == "post-close-official" and run.scoring_adjustments == 3
+    assert sum(a.success for a in run.attempts) == 6
+    assert all(a.episode_success for a in run.attempts)
+    assert before == {p.name: p.read_bytes() for p in root.glob("attempt_*.json")}

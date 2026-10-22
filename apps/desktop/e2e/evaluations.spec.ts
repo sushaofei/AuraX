@@ -76,3 +76,21 @@ test("E3 labels repeated holdouts and shows independently verified subset scene 
   await expect(page.getByText("6 / 9 次计划尝试成功")).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 });
+
+test("final scoring corrections are visible and never overwrite the original diagnostic", async ({ page }) => {
+  await mockClaw(page);
+  const base = report().runs[1]!;
+  const run = { ...base, protocol: "e3-heldout-v1", trials: 3, scoring_basis: "post-close-official", scoring_adjustments: 6, verifier_revision: "a".repeat(40),
+    task_ids: ["family_1", "family_2", "family_3"],
+    attempts: [1, 2, 3].flatMap((task) => [0, 1, 2].map((trial) => ({ ...base.attempts[0]!, task_id: `family_${task}`, trial,
+      success: task === 1, episode_success: true, official_reward: 1, independent_reward: task === 1 ? 1 : 0 }))),
+    official_metrics: [0, 1, 2].map((trial) => ({ trial, tasks: 3, scenarios: 1, task_goal_completion: 0.333, scenario_goal_completion: 0 })),
+  };
+  await page.route("**/aurax/evaluations", (route) => route.fulfill({ json: { ...report(), schema_version: 2, runs: [run] } }));
+  await page.goto("/");
+  await page.getByRole("button", { name: "评测", exact: true }).click();
+  await expect(page.getByText("3 / 9 次计划尝试成功")).toBeVisible();
+  await expect(page.getByText("与运行中读数不同的 6 次判定已更正", { exact: false })).toBeVisible();
+  await page.locator(".evaluation-card summary").click();
+  await expect(page.getByText("运行中判定：成功 → 官方终态：未通过", { exact: true })).toHaveCount(6);
+});

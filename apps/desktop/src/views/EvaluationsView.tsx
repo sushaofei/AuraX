@@ -12,6 +12,7 @@ function RunCard({ run }: { run: EvaluationRun }) {
   return <article className="evaluation-card">
     <div className="evaluation-card-head"><h2>{benchmarkName(c.benchmark)}</h2><span className="evaluation-tag">{run.protocol ? "E3 受控基线" : "开发联调"} · {c.split}{c.domain ? ` / ${c.domain}` : ""}</span></div>
     <p className="helper">{run.validation_scope === "fixture" ? "模拟夹具验证 · 不计正式成绩" : "官方 SDK 评分"} · {stats.complete ? "所选样本已跑完" : `样本未跑完，缺 ${stats.missing} 次`}</p>
+    {run.scoring_basis === "post-close-official" ? <p className="evaluation-notice">按关闭环境后的官方评分裁决。与运行中读数不同的 {run.scoring_adjustments} 次判定已更正，原始记录保留。</p> : null}
     <div className="evaluation-metrics">
       <div><span>成功率</span><strong>{stats.rate === null ? "—" : `${(stats.rate * 100).toFixed(run.protocol ? 1 : 0)}%`}</strong><small>{stats.success} / {stats.expected} 次计划尝试成功</small></div>
       <div><span>平均耗时</span><strong>{mean}</strong><small>已记录 {timed.length} / {run.attempts.length} 次尝试</small></div>
@@ -32,10 +33,12 @@ function RunCard({ run }: { run: EvaluationRun }) {
     <details><summary>查看样本与评测配置</summary>
       <ul className="evaluation-attempts">{run.attempts.map((a) => <li key={`${a.task_id}-${a.trial}`}>
         <div><code>{a.task_id}</code> · 第 {a.trial + 1} 次 <b>{evaluationStatus(a.status, a.success)}</b></div>
-        <span>奖励 {a.official_reward ?? "未知"}{a.independent_reward === null ? "" : ` / 独立复评 ${a.independent_reward}`} · {a.elapsed_seconds === null ? "耗时未知" : `${a.elapsed_seconds.toFixed(1)} 秒`} · 模型 {a.model_calls ?? "未知"} / 工具 {a.tool_calls ?? "未知"} 次</span>
+        <span>运行时奖励 {a.official_reward ?? "未知"}{a.independent_reward === null ? "" : ` / 独立复评 ${a.independent_reward}`} · {a.elapsed_seconds === null ? "耗时未知" : `${a.elapsed_seconds.toFixed(1)} 秒`} · 模型 {a.model_calls ?? "未知"} / 工具 {a.tool_calls ?? "未知"} 次</span>
+        {a.episode_success !== null && a.episode_success !== a.success ? <span>运行中判定：{a.episode_success ? "成功" : "未成功"} → 官方终态：{a.success ? "成功" : "未通过"}</span> : null}
       </li>)}</ul>
       <dl className="evaluation-config">
         <dt>报告编号</dt><dd>{run.run_id}</dd>
+        <dt>最终评分提交</dt><dd>{run.verifier_revision ?? "未记录"}</dd>
         <dt>执行配置</dt><dd>{run.harness_profile}</dd>
         <dt>Harness 提交</dt><dd>{c.harness_revision}</dd>
         <dt>上游版本</dt><dd>{run.upstream_revision ?? "未记录"}</dd>
