@@ -164,3 +164,7 @@ E3 AppWorld 的正式展示只采用 `two-post-close-official-graders` 的最终
 同一基准存在保留样本报告时，早期单次运行收纳到“历史运行”，不合并分母。
 评分修订、逐样本记录、配置版本分为独立展开区，模型快照与子集范围等必要限制保留在成绩下方。
 本次仅更新界面，沿用已发布 schema v2 报告，不重新导出或改写成绩。
+
+基准标题下的简介依据 [τ-bench 官方定义](https://github.com/sierra-research/tau-bench) 与
+[AppWorld 论文](https://arxiv.org/abs/2407.18901)，数据集、领域和样本范围放入配置详情。
+简介介绍基准评测目标，不扩大当前执行配置的覆盖声明。

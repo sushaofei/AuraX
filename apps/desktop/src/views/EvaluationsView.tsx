@@ -5,6 +5,10 @@ import { errorText, isNotFound } from "../lib/errors";
 import "./EvaluationsView.css";
 
 const benchmarkName = (name: string) => ({ "tau-bench": "τ-bench", appworld: "AppWorld" } as Record<string, string>)[name] ?? name;
+const benchmarkDescription = (name: string) => ({
+  "tau-bench": "通过多轮用户对话与工具调用，评估任务完成、业务规则遵循及重复执行的一致性。",
+  appworld: "在多应用交互环境中，通过编程与 API 调用完成任务，评估跨应用操作与任务目标完成情况。",
+} as Record<string, string>)[name];
 const percent = (value: number) => `${(value * 100).toFixed(1)}%`;
 function RunCard({ run }: { run: EvaluationRun }) {
   const stats = evaluationStats(run), c = run.config;
@@ -12,7 +16,7 @@ function RunCard({ run }: { run: EvaluationRun }) {
   const mean = timed.length ? `${(timed.reduce((a, b) => a + b, 0) / timed.length).toFixed(1)} s` : "—";
   return <article className="evaluation-card">
     <header className="evaluation-card-head">
-      <div><h2>{benchmarkName(c.benchmark)}</h2><p>{c.split}{c.domain ? ` / ${c.domain}` : ""} <span className="evaluation-separator">/</span> {run.validation_scope === "fixture" ? "测试数据 · 不计基准成绩" : run.protocol ? "保留样本" : "单次评测"}</p></div>
+      <div><h2>{benchmarkName(c.benchmark)}</h2>{benchmarkDescription(c.benchmark) ? <p>{benchmarkDescription(c.benchmark)}</p> : null}{run.validation_scope === "fixture" ? <p>测试数据 · 不计基准成绩</p> : null}</div>
       <span className={`evaluation-status${stats.complete ? "" : " pending"}`}>{stats.complete ? "已完成" : `未完成 · 缺 ${stats.missing} 次`}</span>
     </header>
     <div className="evaluation-metrics">
@@ -38,6 +42,7 @@ function RunCard({ run }: { run: EvaluationRun }) {
     </details>
     <details className="evaluation-provenance"><summary>评测配置与版本</summary><dl className="evaluation-config">
       <dt>报告编号</dt><dd>{run.run_id}</dd><dt>评测协议</dt><dd>{run.protocol ?? "单次评测"}</dd>
+      <dt>数据集</dt><dd>{c.split}{c.domain ? ` / ${c.domain}` : ""}</dd><dt>样本范围</dt><dd>{run.protocol ? "保留样本" : "单次评测"}</dd>
       <dt>执行配置</dt><dd>{run.harness_profile}</dd><dt>执行器版本</dt><dd>{c.harness_revision}</dd>
       <dt>评分器版本</dt><dd>{run.verifier_revision ?? "未记录"}</dd><dt>基准版本</dt><dd>{run.upstream_revision ?? "未记录"}</dd>
       <dt>数据指纹</dt><dd>{c.dataset_revision}</dd><dt>数据校验</dt><dd>{run.attempts.length > 0 && run.attempts.every((a) => a.dataset_revision_verified) ? "已记录样本全部通过" : "存在未校验样本"}</dd>

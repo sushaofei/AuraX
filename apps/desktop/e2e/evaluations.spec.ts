@@ -71,7 +71,7 @@ test("E3 labels repeated holdouts and shows independently verified subset scene 
   await page.route("**/aurax/evaluations", (route) => route.fulfill({ json: { ...report(), runs: [run] } }));
   await page.goto("/");
   await page.getByRole("button", { name: "评测", exact: true }).click();
-  await expect(page.getByText("dev / 保留样本", { exact: false })).toBeVisible();
+  await expect(page.getByText("在多应用交互环境中", { exact: false })).toBeVisible();
   await expect(page.getByText("pass^3", { exact: false })).toBeVisible();
   await expect(page.getByRole("columnheader", { name: "TGC", exact: true })).toBeVisible();
   await expect(page.getByRole("cell", { name: "66.7%", exact: true })).toHaveCount(3);
