@@ -20,12 +20,13 @@ for (const width of [390, 760, 1440]) {
     await page.route("**/aurax/evaluations", (route) => route.fulfill({ json: report() }));
     await page.goto("/");
     await page.getByRole("button", { name: "评测", exact: true }).click();
-    await expect(page.getByText("50%", { exact: true })).toBeVisible();
-    await expect(page.getByText("100%", { exact: true })).toBeVisible();
-    await expect(page.getByText("1 / 2 次计划尝试成功")).toBeVisible();
+    await expect(page.getByText("50.0%", { exact: true })).toBeVisible();
+    await expect(page.getByText("100.0%", { exact: true })).toBeVisible();
+    await expect(page.getByText("1 / 2 次尝试成功")).toBeVisible();
     const tau = page.locator(".evaluation-card").filter({ has: page.getByRole("heading", { name: "τ-bench", exact: true }) });
-    await tau.locator("summary").click();
+    await tau.locator(".evaluation-samples summary").click();
     await expect(tau.getByText("任务未通过", { exact: true })).toBeVisible();
+    await tau.locator(".evaluation-provenance summary").click();
     await expect(tau.getByText("c".repeat(40), { exact: true })).toBeVisible();
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     await page.getByLabel("基准", { exact: true }).selectOption("appworld");
@@ -45,7 +46,7 @@ test("missing, invalid, empty and refreshed reports stay distinct", async ({ pag
   });
   await page.goto("/");
   await page.getByRole("button", { name: "评测", exact: true }).click();
-  await expect(page.getByRole("alert")).toContainText("尚未接入");
+  await expect(page.getByRole("alert")).toContainText("尚未发布");
   mode = "invalid";
   await page.getByRole("button", { name: "刷新报告" }).click();
   await expect(page.getByRole("alert")).toContainText("格式无效");
@@ -54,8 +55,8 @@ test("missing, invalid, empty and refreshed reports stay distinct", async ({ pag
   await expect(page.getByText("暂无已发布的评测结果。")).toBeVisible();
   mode = "partial";
   await page.getByRole("button", { name: "刷新报告" }).click();
-  await expect(page.getByText("样本未跑完，缺 1 次", { exact: false })).toBeVisible();
-  await expect(page.getByText("50%", { exact: true })).toHaveCount(0);
+  await expect(page.getByText("未完成 · 缺 1 次", { exact: false })).toBeVisible();
+  await expect(page.getByText("50.0%", { exact: true })).toHaveCount(0);
 });
 
 test("E3 labels repeated holdouts and shows independently verified subset scene scores", async ({ page }) => {
@@ -70,10 +71,11 @@ test("E3 labels repeated holdouts and shows independently verified subset scene 
   await page.route("**/aurax/evaluations", (route) => route.fulfill({ json: { ...report(), runs: [run] } }));
   await page.goto("/");
   await page.getByRole("button", { name: "评测", exact: true }).click();
-  await expect(page.locator(".evaluation-tag").getByText("E3 受控基线", { exact: false })).toBeVisible();
+  await expect(page.getByText("dev / 保留样本", { exact: false })).toBeVisible();
   await expect(page.getByText("pass^3", { exact: false })).toBeVisible();
-  await expect(page.getByText("第 1 次：TGC 66.7% / SGC 0.0%", { exact: false })).toBeVisible();
-  await expect(page.getByText("6 / 9 次计划尝试成功")).toBeVisible();
+  await expect(page.getByRole("columnheader", { name: "TGC", exact: true })).toBeVisible();
+  await expect(page.getByRole("cell", { name: "66.7%", exact: true })).toHaveCount(3);
+  await expect(page.getByText("6 / 9 次尝试成功")).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 });
 
@@ -89,8 +91,27 @@ test("final scoring corrections are visible and never overwrite the original dia
   await page.route("**/aurax/evaluations", (route) => route.fulfill({ json: { ...report(), schema_version: 2, runs: [run] } }));
   await page.goto("/");
   await page.getByRole("button", { name: "评测", exact: true }).click();
-  await expect(page.getByText("3 / 9 次计划尝试成功")).toBeVisible();
-  await expect(page.getByText("与运行中读数不同的 6 次判定已更正", { exact: false })).toBeVisible();
-  await page.locator(".evaluation-card summary").click();
-  await expect(page.getByText("运行中判定：成功 → 官方终态：未通过", { exact: true })).toHaveCount(6);
+  await expect(page.getByText("3 / 9 次尝试成功")).toBeVisible();
+  await expect(page.getByText("评分修订 · 6 次判定更正", { exact: false })).toBeVisible();
+  await page.locator(".evaluation-samples summary").click();
+  await expect(page.getByText("原始判定：成功 → 未通过", { exact: true })).toHaveCount(6);
+});
+
+
+test("primary cohorts and history remain separate without removing reports", async ({ page }) => {
+  await mockClaw(page);
+  const value = report();
+  const prior = value.runs[0]!;
+  const current = { ...prior, run_id: `eval_${"e".repeat(32)}`, protocol: "e3-heldout-v1", trials: 3,
+    attempts: prior.attempts.flatMap((a) => [0, 1, 2].map((trial) => ({ ...a, trial }))) };
+  await page.route("**/aurax/evaluations", (route) => route.fulfill({ json: { ...value, runs: [current, ...value.runs] } }));
+  await page.goto("/");
+  await page.getByRole("button", { name: "评测", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "τ-bench", exact: true })).toHaveCount(1);
+  await expect(page.getByText("从真实运行结果了解 Agent", { exact: false })).toHaveCount(0);
+  await page.locator(".evaluation-history > summary").click();
+  await expect(page.getByRole("heading", { name: "τ-bench", exact: true })).toHaveCount(2);
+  await page.getByLabel("基准", { exact: true }).selectOption("appworld");
+  await expect(page.locator(".evaluation-history")).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "AppWorld", exact: true })).toBeVisible();
 });

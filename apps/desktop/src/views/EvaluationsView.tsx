@@ -5,50 +5,45 @@ import { errorText, isNotFound } from "../lib/errors";
 import "./EvaluationsView.css";
 
 const benchmarkName = (name: string) => ({ "tau-bench": "τ-bench", appworld: "AppWorld" } as Record<string, string>)[name] ?? name;
+const percent = (value: number) => `${(value * 100).toFixed(1)}%`;
 function RunCard({ run }: { run: EvaluationRun }) {
   const stats = evaluationStats(run), c = run.config;
   const timed = run.attempts.map((a) => a.elapsed_seconds).filter((s): s is number => s !== null);
-  const mean = timed.length ? `${(timed.reduce((a, b) => a + b, 0) / timed.length).toFixed(1)} 秒` : "未知";
+  const mean = timed.length ? `${(timed.reduce((a, b) => a + b, 0) / timed.length).toFixed(1)} s` : "—";
   return <article className="evaluation-card">
-    <div className="evaluation-card-head"><h2>{benchmarkName(c.benchmark)}</h2><span className="evaluation-tag">{run.protocol ? "E3 受控基线" : "开发联调"} · {c.split}{c.domain ? ` / ${c.domain}` : ""}</span></div>
-    <p className="helper">{run.validation_scope === "fixture" ? "模拟夹具验证 · 不计正式成绩" : "官方 SDK 评分"} · {stats.complete ? "所选样本已跑完" : `样本未跑完，缺 ${stats.missing} 次`}</p>
-    {run.scoring_basis === "post-close-official" ? <p className="evaluation-notice">按关闭环境后的官方评分裁决。与运行中读数不同的 {run.scoring_adjustments} 次判定已更正，原始记录保留。</p> : null}
+    <header className="evaluation-card-head">
+      <div><h2>{benchmarkName(c.benchmark)}</h2><p>{c.split}{c.domain ? ` / ${c.domain}` : ""} <span className="evaluation-separator">/</span> {run.validation_scope === "fixture" ? "测试数据 · 不计基准成绩" : run.protocol ? "保留样本" : "单次评测"}</p></div>
+      <span className={`evaluation-status${stats.complete ? "" : " pending"}`}>{stats.complete ? "已完成" : `未完成 · 缺 ${stats.missing} 次`}</span>
+    </header>
     <div className="evaluation-metrics">
-      <div><span>成功率</span><strong>{stats.rate === null ? "—" : `${(stats.rate * 100).toFixed(run.protocol ? 1 : 0)}%`}</strong><small>{stats.success} / {stats.expected} 次计划尝试成功</small></div>
-      <div><span>平均执行耗时</span><strong>{mean}</strong><small>已记录 {timed.length} / {run.attempts.length} 次尝试</small></div>
-      <div><span>任务失败 / 执行异常</span><strong>{stats.failures} / {stats.errors}</strong><small>预算耗尽计入任务失败；超时计入异常</small></div>
+      <div className="evaluation-primary"><span>任务成功率</span><strong>{stats.rate === null ? "—" : percent(stats.rate)}</strong><small>{stats.success} / {stats.expected} 次尝试成功</small></div>
+      <div><span>样本规模</span><strong>{run.task_ids.length}<em>题</em></strong><small>每题 {run.trials} 次 · 共 {stats.expected} 次计划尝试</small></div>
+      <div><span>平均耗时</span><strong>{mean}</strong><small>{timed.length} 次有效耗时记录</small></div>
+      <div><span>失败 / 异常</span><strong>{stats.failures}<em>/</em>{stats.errors}</strong><small>预算耗尽计失败，超时计异常</small></div>
     </div>
-    {run.protocol ? <div className="evaluation-repeat">
-      <p><b>保留样本 · 每题 3 次独立尝试</b></p>
-      <p className="helper">同一任务 k 次都成功的估计（不是 pass@k）。模型快照未锁定，暂无配对模型对照。</p>
-      {stats.complete ? <p>{evaluationConsistency(run).map(({ k, value }) => <span key={k}>pass^{k} <b>{(value * 100).toFixed(1)}%</b>{" · "}</span>)}</p> : <p>重复尝试未跑齐，暂不提供一致性指标。</p>}
-      {c.benchmark === "appworld" ? run.official_metrics ? <>
-        <p><b>官方独立复评 · 所选完整场景子集</b></p>
-        <p className="helper">TGC 为任务目标完成率，SGC 为场景内全部任务完成率；与上方 Agent 严格成功率分开。</p>
-        <ul>{run.official_metrics.map((m) => <li key={m.trial}>第 {m.trial + 1} 次：TGC {(m.task_goal_completion * 100).toFixed(1)}% / SGC {(m.scenario_goal_completion * 100).toFixed(1)}%<br /><small>{m.tasks} 题 / {m.scenarios} 个完整场景</small></li>)}</ul>
-      </> : <p>尚无可验证的官方场景复评，不展示 SGC。</p> : null}
-    </div> : null}
-    <p><b>{c.model}</b><br /><span className="helper">模型别名，未锁定不可变快照 · 总费用未知</span></p>
-    <p className="helper">{run.task_ids.length} 个任务 × {run.trials} 次 · 已记录 {run.attempts.length} 次尝试</p>
-    <details><summary>查看样本与评测配置</summary>
-      <ul className="evaluation-attempts">{run.attempts.map((a) => <li key={`${a.task_id}-${a.trial}`}>
-        <div><code>{a.task_id}</code> · 第 {a.trial + 1} 次 <b>{evaluationStatus(a.status, a.success)}</b></div>
-        <span>运行时奖励 {a.official_reward ?? "未知"}{a.independent_reward === null ? "" : ` / 独立复评 ${a.independent_reward}`} · {a.elapsed_seconds === null ? "耗时未知" : `${a.elapsed_seconds.toFixed(1)} 秒`} · 模型 {a.model_calls ?? "未知"} / 工具 {a.tool_calls ?? "未知"} 次</span>
-        {a.episode_success !== null && a.episode_success !== a.success ? <span>运行中判定：{a.episode_success ? "成功" : "未成功"} → 官方终态：{a.success ? "成功" : "未通过"}</span> : null}
-      </li>)}</ul>
-      <dl className="evaluation-config">
-        <dt>报告编号</dt><dd>{run.run_id}</dd>
-        <dt>最终评分提交</dt><dd>{run.verifier_revision ?? "未记录"}</dd>
-        <dt>执行配置</dt><dd>{run.harness_profile}</dd>
-        <dt>Harness 提交</dt><dd>{c.harness_revision}</dd>
-        <dt>上游版本</dt><dd>{run.upstream_revision ?? "未记录"}</dd>
-        <dt>数据指纹</dt><dd>{c.dataset_revision}</dd>
-        <dt>数据校验</dt><dd>{run.attempts.every((a) => a.dataset_revision_verified) && run.attempts.length > 0 ? "已记录样本均已校验" : "存在未校验样本"}</dd>
-        <dt>预算</dt><dd>{c.max_actions} 次动作 · {c.max_output_tokens} 输出 token · 每轮 {c.per_turn_output_tokens} · {c.timeout_seconds} 秒</dd>
-        <dt>随机种子</dt><dd>{c.seed}</dd>
-        <dt>用户模拟器</dt><dd>{c.user_model ? `${c.user_model} / ${c.user_provider}` : "不适用"}</dd>
-      </dl>
+    <dl className="evaluation-conditions"><div><dt>模型</dt><dd>{c.model}</dd></div><div><dt>执行上限</dt><dd>{c.max_actions} 次动作 · {c.timeout_seconds} s</dd></div><div><dt>评分依据</dt><dd>{run.validation_scope === "fixture" ? "测试数据" : run.scoring_basis === "post-close-official" ? "官方终态复评" : "官方 SDK"}</dd></div></dl>
+    {run.protocol ? <section className="evaluation-consistency" aria-label="重复评测一致性">
+      <h3>重复评测一致性</h3><p className="evaluation-caption">pass^k：同一任务 k 次均成功的估计值。</p>
+      {stats.complete ? <dl>{evaluationConsistency(run).map(({ k, value }) => <div key={k}><dt>pass^{k}</dt><dd>{percent(value)}</dd></div>)}</dl> : <p className="evaluation-caption">尝试记录不完整，暂不计算。</p>}
+    </section> : null}
+    {run.official_metrics ? <section className="evaluation-scenes"><h3>场景评测</h3><p className="evaluation-caption">所选完整场景子集。TGC：任务目标完成率；SGC：场景内全部任务完成率。</p><div className="evaluation-table-wrap"><table><thead><tr><th>轮次</th><th>任务 / 场景</th><th>TGC</th><th>SGC</th></tr></thead><tbody>{run.official_metrics.map((m) => <tr key={m.trial}><td>{m.trial + 1}</td><td>{m.tasks} / {m.scenarios}</td><td>{percent(m.task_goal_completion)}</td><td>{percent(m.scenario_goal_completion)}</td></tr>)}</tbody></table></div></section> : null}
+    <p className="evaluation-limits">开发集子集 · 模型快照未锁定 · 无配对模型对照 · 费用未记录</p>
+    {run.scoring_basis === "post-close-official" ? <details className="evaluation-revision"><summary>评分修订 · {run.scoring_adjustments} 次判定更正</summary><p>最终成绩采用关闭环境后的官方复评。{run.scoring_adjustments} 次判定与运行中读数不同，原始判定及奖励保留在样本明细中。</p></details> : null}
+    <details className="evaluation-samples"><summary>样本明细 <span>{run.attempts.length} 次尝试</span></summary>
+      <div className="evaluation-table-wrap"><table><thead><tr><th>任务 / 轮次</th><th>结果</th><th>耗时</th><th>模型 / 工具调用</th><th>运行奖励 / 复评奖励</th></tr></thead><tbody>{run.attempts.map((a) => <tr key={`${a.task_id}-${a.trial}`}>
+        <th scope="row"><code>{a.task_id}</code><small>第 {a.trial + 1} 轮</small></th>
+        <td>{evaluationStatus(a.status, a.success)}{a.episode_success !== null && a.episode_success !== a.success ? <small>原始判定：{a.episode_success ? "成功" : "未成功"} → {a.success ? "成功" : "未通过"}</small> : null}</td>
+        <td>{a.elapsed_seconds === null ? "—" : `${a.elapsed_seconds.toFixed(1)} s`}</td><td>{a.model_calls ?? "—"} / {a.tool_calls ?? "—"}</td><td>{a.official_reward ?? "—"} / {a.independent_reward ?? "—"}</td>
+      </tr>)}</tbody></table></div>
     </details>
+    <details className="evaluation-provenance"><summary>评测配置与版本</summary><dl className="evaluation-config">
+      <dt>报告编号</dt><dd>{run.run_id}</dd><dt>评测协议</dt><dd>{run.protocol ?? "单次评测"}</dd>
+      <dt>执行配置</dt><dd>{run.harness_profile}</dd><dt>执行器版本</dt><dd>{c.harness_revision}</dd>
+      <dt>评分器版本</dt><dd>{run.verifier_revision ?? "未记录"}</dd><dt>基准版本</dt><dd>{run.upstream_revision ?? "未记录"}</dd>
+      <dt>数据指纹</dt><dd>{c.dataset_revision}</dd><dt>数据校验</dt><dd>{run.attempts.length > 0 && run.attempts.every((a) => a.dataset_revision_verified) ? "已记录样本全部通过" : "存在未校验样本"}</dd>
+      <dt>输出预算</dt><dd>{c.max_output_tokens} tokens · 每轮 {c.per_turn_output_tokens} tokens</dd><dt>随机种子</dt><dd>{c.seed}</dd>
+      <dt>用户模拟器</dt><dd>{c.user_model ? `${c.user_model} / ${c.user_provider}` : "不适用"}</dd>
+    </dl></details>
   </article>;
 }
 export function EvaluationsView({ client }: { client: ClawClient }) {
@@ -56,17 +51,20 @@ export function EvaluationsView({ client }: { client: ClawClient }) {
   const report = useQuery({ queryKey: ["evaluations", client.baseUrl, client.identity.tenantId, client.identity.deptId, client.identity.userId],
     queryFn: () => getEvaluations(client), retry: false });
   const runs = report.data?.runs ?? [];
+  // Protocol runs are the primary cohort; earlier single-attempt runs remain accessible as history.
+  const primary = runs.filter((r) => r.protocol || !runs.some((other) => other.protocol && other.config.benchmark === r.config.benchmark));
+  const history = runs.filter((r) => !primary.includes(r));
+  const matches = (run: EvaluationRun) => filter === "all" || run.config.benchmark === filter;
   return <section className="evaluations">
-    <p className="kicker">Evaluations</p>
-    <div className="page-head"><h1>评测</h1><button className="btn ghost" type="button" disabled={report.isFetching} onClick={() => void report.refetch()}>{report.isFetching ? "刷新中…" : "刷新报告"}</button></div>
-    <p className="lede">从真实运行结果了解 Agent 的任务完成情况。</p>
-    <p className="evaluation-notice">当前展示开发集样本结果，不代表完整基准成绩或模型排名。E2 联调与 E3 受控基线独立展示，不合并不同配置；场景指标仅限所选完整场景子集，三次重复不代表稳定性保证。</p>
+    <div className="page-head"><div><h1>评测</h1><p className="evaluation-subtitle">基准成绩、执行条件与评分记录</p></div><button className="btn ghost" type="button" disabled={report.isFetching} onClick={() => void report.refetch()}>{report.isFetching ? "刷新中…" : "刷新报告"}</button></div>
     {report.isPending ? <p role="status">正在加载评测报告…</p> : null}
-    {report.isError ? <p role="alert">{isNotFound(report.error) ? "当前环境尚未接入评测报告。请联系管理员导入已有结果。" : `无法加载评测报告：${errorText(report.error)}`}{report.data ? " 当前保留上次加载的数据。" : ""}</p> : null}
+    {report.isError ? <p role="alert">{isNotFound(report.error) ? "尚未发布评测报告。" : `无法加载评测报告：${errorText(report.error)}`}{report.data ? " 当前显示上次加载的数据。" : ""}</p> : null}
     {report.data ? <>
-      <div className="evaluation-toolbar"><label>基准 <select aria-label="基准" value={filter} onChange={(e) => setFilter(e.target.value)}><option value="all">全部</option>{[...new Set(runs.map((r) => r.config.benchmark))].map((b) => <option key={b} value={b}>{benchmarkName(b)}</option>)}</select></label><span className="helper">报告导入时间：{new Date(report.data.exported_at).toLocaleString("zh-CN")}</span></div>
+      <div className="evaluation-toolbar"><label>基准 <select aria-label="基准" value={filter} onChange={(e) => setFilter(e.target.value)}><option value="all">全部</option>{[...new Set(runs.map((r) => r.config.benchmark))].map((b) => <option key={b} value={b}>{benchmarkName(b)}</option>)}</select></label><span>报告发布于 {new Date(report.data.exported_at).toLocaleString("zh-CN", { hour12: false })}</span></div>
       {runs.length === 0 ? <p role="status">暂无已发布的评测结果。</p> : null}
-      <div className="evaluation-grid">{runs.filter((r) => filter === "all" || r.config.benchmark === filter).map((run) => <RunCard key={run.run_id} run={run} />)}</div>
+      <div className="evaluation-grid">{primary.filter(matches).map((run) => <RunCard key={run.run_id} run={run} />)}</div>
+      {history.some(matches) ? <details className="evaluation-history"><summary>历史运行 <span>{history.filter(matches).length} 份报告</span></summary><div className="evaluation-grid">{history.filter(matches).map((run) => <RunCard key={run.run_id} run={run} />)}</div></details> : null}
+      {runs.length > 0 ? <p className="evaluation-footnote">各运行按独立配置统计；子集结果不用于完整基准排名。</p> : null}
     </> : null}
   </section>;
 }
