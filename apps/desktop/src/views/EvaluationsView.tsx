@@ -15,7 +15,7 @@ function RunCard({ run }: { run: EvaluationRun }) {
     {run.scoring_basis === "post-close-official" ? <p className="evaluation-notice">按关闭环境后的官方评分裁决。与运行中读数不同的 {run.scoring_adjustments} 次判定已更正，原始记录保留。</p> : null}
     <div className="evaluation-metrics">
       <div><span>成功率</span><strong>{stats.rate === null ? "—" : `${(stats.rate * 100).toFixed(run.protocol ? 1 : 0)}%`}</strong><small>{stats.success} / {stats.expected} 次计划尝试成功</small></div>
-      <div><span>平均耗时</span><strong>{mean}</strong><small>已记录 {timed.length} / {run.attempts.length} 次尝试</small></div>
+      <div><span>平均执行耗时</span><strong>{mean}</strong><small>已记录 {timed.length} / {run.attempts.length} 次尝试</small></div>
       <div><span>任务失败 / 执行异常</span><strong>{stats.failures} / {stats.errors}</strong><small>预算耗尽计入任务失败；超时计入异常</small></div>
     </div>
     {run.protocol ? <div className="evaluation-repeat">

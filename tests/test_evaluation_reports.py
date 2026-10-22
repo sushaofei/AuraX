@@ -149,6 +149,16 @@ def e3_world(root):
             for t in range(3)
         ],
     )
+    receipt.update(
+        verification_basis="two-post-close-official-graders",
+        verifier_revision="a" * 40,
+        episode_success_adjustments=0,
+        regraded_rewards=[
+            dict(task_id=t, trial=k, reward=0 if t.endswith("3") else 1)
+            for t in manifest["task_ids"]
+            for k in range(3)
+        ],
+    )
     (root / "official-metrics.json").write_text(json.dumps(receipt))
     return receipt
 
@@ -239,3 +249,11 @@ def test_post_close_final_judgments_correct_only_the_published_projection(tmp_pa
     assert sum(a.success for a in run.attempts) == 6
     assert all(a.episode_success for a in run.attempts)
     assert before == {p.name: p.read_bytes() for p in root.glob("attempt_*.json")}
+
+
+def test_e3_appworld_live_diagnostics_are_never_published_as_final_results(tmp_path):
+    root = raw_run(tmp_path)
+    e3_world(root)
+    (root / "official-metrics.json").unlink()
+    with pytest.raises(ValueError, match="finalized post-close"):
+        export_run(root)

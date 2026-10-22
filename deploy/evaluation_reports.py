@@ -122,6 +122,14 @@ class Run(PublicModel):
             identities.add(key)
         if self.protocol and (self.config.split != "dev" or self.trials != 3):
             raise ValueError("Invalid E3 protocol")
+        if (
+            self.protocol
+            and self.config.benchmark == "appworld"
+            and self.scoring_basis != "post-close-official"
+        ):
+            raise ValueError(
+                "E3 AppWorld requires finalized post-close official scores"
+            )
         if self.scoring_basis == "episode" and any(
             a.independent_reward is not None
             and a.official_reward is not None
