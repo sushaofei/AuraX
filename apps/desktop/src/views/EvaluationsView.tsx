@@ -4,14 +4,20 @@ import { evaluationConsistency, evaluationStats, evaluationStatus, getEvaluation
 import { errorText, isNotFound } from "../lib/errors";
 import "./EvaluationsView.css";
 
-const benchmarkName = (name: string) => ({ "tau-bench": "τ-bench", appworld: "AppWorld" } as Record<string, string>)[name] ?? name;
+const benchmarkName = (name: string) => ({ "tau-bench": "τ-bench", appworld: "AppWorld", longmemeval: "LongMemEval", skillsbench: "SkillsBench", "mcp-universe": "MCP-Universe" } as Record<string, string>)[name] ?? name;
 const benchmarkDescription = (name: string) => ({
   "tau-bench": "通过多轮用户对话与工具调用，评估任务完成、业务规则遵循及重复执行的一致性。",
   appworld: "在多应用交互环境中，通过编程与 API 调用完成任务，评估跨应用操作与任务目标完成情况。",
+  longmemeval: "通过跨会话历史评估信息提取、时间推理、知识更新与信息不足时的拒答能力。",
+  skillsbench: "通过有无技能包的配对任务，评估技能使用对任务完成率和执行成本的影响。",
+  "mcp-universe": "通过真实 MCP Server 的多步骤任务，评估工具选择、参数控制与任务完成情况。",
 } as Record<string, string>)[name];
 const benchmarkUrl = (name: string) => ({
   "tau-bench": "https://github.com/sierra-research/tau-bench",
   appworld: "https://github.com/StonyBrookNLP/appworld",
+  longmemeval: "https://github.com/xiaowu0162/LongMemEval",
+  skillsbench: "https://www.skillsbench.ai/",
+  "mcp-universe": "https://mcp-universe.github.io/",
 } as Record<string, string>)[name];
 const percent = (value: number) => `${(value * 100).toFixed(1)}%`;
 function RunCard({ run }: { run: EvaluationRun }) {
@@ -35,7 +41,7 @@ function RunCard({ run }: { run: EvaluationRun }) {
       {stats.complete ? <dl>{evaluationConsistency(run).map(({ k, value }) => <div key={k}><dt>pass^{k}</dt><dd>{percent(value)}</dd></div>)}</dl> : <p className="evaluation-caption">尝试记录不完整，暂不计算。</p>}
     </section> : null}
     {run.official_metrics ? <section className="evaluation-scenes"><h3>场景评测</h3><p className="evaluation-caption">所选完整场景子集。TGC：任务目标完成率；SGC：场景内全部任务完成率。</p><div className="evaluation-table-wrap"><table><thead><tr><th>轮次</th><th>任务 / 场景</th><th>TGC</th><th>SGC</th></tr></thead><tbody>{run.official_metrics.map((m) => <tr key={m.trial}><td>{m.trial + 1}</td><td>{m.tasks} / {m.scenarios}</td><td>{percent(m.task_goal_completion)}</td><td>{percent(m.scenario_goal_completion)}</td></tr>)}</tbody></table></div></section> : null}
-    <p className="evaluation-limits">开发集子集 · 模型快照未锁定 · 无配对模型对照 · 费用未记录</p>
+    <p className="evaluation-limits">{c.benchmark === "longmemeval" ? "LongMemEval-S 子集" : c.benchmark === "skillsbench" || c.benchmark === "mcp-universe" ? "任务子集" : "开发集子集"} · 模型快照未锁定 · 无配对模型对照 · 费用未记录</p>
     {run.scoring_basis === "post-close-official" ? <details className="evaluation-revision"><summary>评分修订 · {run.scoring_adjustments} 次判定更正</summary><p>最终成绩采用关闭环境后的官方复评。{run.scoring_adjustments} 次判定与运行中读数不同，原始判定及奖励保留在样本明细中。</p></details> : null}
     <details className="evaluation-samples"><summary>样本明细 <span>{run.attempts.length} 次尝试</span></summary>
       <div className="evaluation-table-wrap"><table><thead><tr><th>任务 / 轮次</th><th>结果</th><th>耗时</th><th>模型 / 工具调用</th><th>运行奖励 / 复评奖励</th></tr></thead><tbody>{run.attempts.map((a) => <tr key={`${a.task_id}-${a.trial}`}>

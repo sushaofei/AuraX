@@ -120,3 +120,24 @@ test("primary cohorts and history remain separate without removing reports", asy
   await expect(page.locator(".evaluation-history")).toHaveCount(0);
   await expect(page.getByRole("heading", { name: "AppWorld", exact: true })).toBeVisible();
 });
+
+for (const [benchmark, title, url, scope] of [
+  ["longmemeval", "LongMemEval", "https://github.com/xiaowu0162/LongMemEval", "LongMemEval-S 子集"],
+  ["skillsbench", "SkillsBench", "https://www.skillsbench.ai/", "任务子集"],
+  ["mcp-universe", "MCP-Universe", "https://mcp-universe.github.io/", "任务子集"],
+]) {
+  test(`component benchmark metadata remains source-linked: ${benchmark}`, async ({ page }) => {
+    await mockClaw(page);
+    const value = report();
+    const run = value.runs[0]!;
+    run.config.benchmark = benchmark!;
+    run.validation_scope = "fixture";
+    await page.route("**/aurax/evaluations", (route) => route.fulfill({ json: { ...value, runs: [run] } }));
+    await page.goto("/");
+    await page.getByRole("button", { name: "评测", exact: true }).click();
+    await expect(page.getByRole("heading", { name: title!, exact: true })).toBeVisible();
+    await expect(page.getByRole("link", { name: `${title} 官方文档（新窗口）`, exact: true })).toHaveAttribute("href", url!);
+    await expect(page.getByText(scope!, { exact: false })).toBeVisible();
+    await expect(page.getByText("测试数据 · 不计基准成绩", { exact: true })).toBeVisible();
+  });
+}
