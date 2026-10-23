@@ -257,6 +257,8 @@ class Report(PublicModel):
 
 
 def export_run(root: Path) -> Run:
+    if (root / "publication-hold.json").exists() or (root.parent / "publication-hold.json").exists():
+        raise ValueError("Evaluation batch is held for operator review")
     manifest = json.loads((root / "manifest.json").read_text())
     # Config is explicitly projected, never forwarded wholesale.
     config = Config.model_validate(

@@ -299,3 +299,10 @@ def test_component_publication_rejects_incomplete_or_mixed_scope(tmp_path, probl
         path.write_text(json.dumps(record))
     with pytest.raises(ValueError):
         export_run(root)
+
+
+def test_publication_hold_rejects_even_structurally_complete_results(tmp_path):
+    root = raw_run(tmp_path)
+    (tmp_path / "publication-hold.json").write_text('{"publication_allowed":false}')
+    with pytest.raises(ValueError, match="held for operator review"):
+        export_run(root)
