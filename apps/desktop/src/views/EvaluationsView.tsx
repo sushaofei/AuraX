@@ -19,14 +19,36 @@ const benchmarkUrl = (name: string) => ({
   skillsbench: "https://www.skillsbench.ai/",
   "mcp-universe": "https://mcp-universe.github.io/",
 } as Record<string, string>)[name];
+const conditionName = (condition: string) => ({ "no-memory": "无记忆", "retrieval-memory": "检索记忆", "full-history": "完整历史", "without-skill": "无技能包", "with-skill": "有技能包", "gateway-tools": "MCP 工具" } as Record<string, string>)[condition] ?? condition;
 const percent = (value: number) => `${(value * 100).toFixed(1)}%`;
+function ConditionComparison({ runs }: { runs: EvaluationRun[] }) {
+  const groups = ["longmemeval", "skillsbench"].map((benchmark) => runs.filter((run) => run.config.benchmark === benchmark && run.component));
+  return <>{groups.map((group) => {
+    const first = group[0];
+    if (!first || group.length < 2 || new Set(group.map((r) => r.component!.condition)).size !== group.length) return null;
+    // Compare only the same model, harness, budgets, judge and task/trial cohort.
+    const signature = (r: EvaluationRun) => JSON.stringify([r.config, [...r.task_ids].sort(), r.trials, r.component?.judge_model, r.component?.task_timeouts]);
+    if (!group.every((r) => signature(r) === signature(first))) return null;
+    const baseline = group.find((r) => ["no-memory", "without-skill"].includes(r.component!.condition));
+    const baseRate = baseline ? evaluationStats(baseline).rate : null;
+    return <section className="evaluation-card" key={first.config.benchmark} aria-label={`${benchmarkName(first.config.benchmark)} 条件对照`}>
+      <h2>{benchmarkName(first.config.benchmark)} · 条件对照</h2>
+      <p className="evaluation-caption">相同模型、任务与预算；成功率包含全部计划尝试，异常不剔除。</p>
+      <div className="evaluation-table-wrap"><table><thead><tr><th>条件</th><th>成功 / 尝试</th><th>成功率</th><th>相对基线</th><th>异常</th></tr></thead><tbody>{group.map((run) => {
+        const stats = evaluationStats(run);
+        const delta = stats.rate !== null && baseRate !== null ? (stats.rate - baseRate) * 100 : null;
+        return <tr key={run.run_id}><th scope="row">{conditionName(run.component!.condition)}</th><td>{stats.success} / {stats.expected}</td><td>{stats.rate === null ? "—" : percent(stats.rate)}</td><td>{run === baseline ? "基线" : delta === null ? "—" : `${delta > 0 ? "+" : ""}${delta.toFixed(1)} 个百分点`}</td><td>{stats.errors}</td></tr>;
+      })}</tbody></table></div>
+    </section>;
+  })}</>;
+}
 function RunCard({ run }: { run: EvaluationRun }) {
   const stats = evaluationStats(run), c = run.config;
   const timed = run.attempts.map((a) => a.elapsed_seconds).filter((s): s is number => s !== null);
   const mean = timed.length ? `${(timed.reduce((a, b) => a + b, 0) / timed.length).toFixed(1)} s` : "—";
   return <article className="evaluation-card">
     <header className="evaluation-card-head">
-      <div><h2>{benchmarkName(c.benchmark)}</h2>{benchmarkDescription(c.benchmark) ? <p>{benchmarkDescription(c.benchmark)}</p> : null}{benchmarkUrl(c.benchmark) ? <a className="evaluation-source" href={benchmarkUrl(c.benchmark)} target="_blank" rel="noopener noreferrer" aria-label={`${benchmarkName(c.benchmark)} 官方文档（新窗口）`}>官方文档 <span aria-hidden="true">↗</span></a> : null}{run.validation_scope === "fixture" ? <p>测试数据 · 不计基准成绩</p> : null}</div>
+      <div><h2>{benchmarkName(c.benchmark)}{run.component ? ` · ${conditionName(run.component.condition)}` : ""}</h2>{benchmarkDescription(c.benchmark) ? <p>{benchmarkDescription(c.benchmark)}</p> : null}{benchmarkUrl(c.benchmark) ? <a className="evaluation-source" href={benchmarkUrl(c.benchmark)} target="_blank" rel="noopener noreferrer" aria-label={`${benchmarkName(c.benchmark)} 官方文档（新窗口）`}>官方文档 <span aria-hidden="true">↗</span></a> : null}{run.validation_scope === "fixture" ? <p>测试数据 · 不计基准成绩</p> : null}</div>
       <span className={`evaluation-status${stats.complete ? "" : " pending"}`}>{stats.complete ? "已完成" : `未完成 · 缺 ${stats.missing} 次`}</span>
     </header>
     <div className="evaluation-metrics">
@@ -35,24 +57,31 @@ function RunCard({ run }: { run: EvaluationRun }) {
       <div><span>平均耗时</span><strong>{mean}</strong><small>{timed.length} 次有效耗时记录</small></div>
       <div><span>失败 / 异常</span><strong>{stats.failures}<em>/</em>{stats.errors}</strong><small>预算耗尽计失败，超时计异常</small></div>
     </div>
-    <dl className="evaluation-conditions"><div><dt>模型</dt><dd>{c.model}</dd></div><div><dt>执行上限</dt><dd>{c.max_actions} 次动作 · {c.timeout_seconds} s</dd></div><div><dt>评分依据</dt><dd>{run.validation_scope === "fixture" ? "测试数据" : run.scoring_basis === "post-close-official" ? "官方终态复评" : "官方 SDK"}</dd></div></dl>
+    <dl className="evaluation-conditions"><div><dt>模型</dt><dd>{c.model}</dd></div><div><dt>执行上限</dt><dd>{c.max_actions} 次动作 · {c.timeout_seconds} s</dd></div><div><dt>评分依据</dt><dd>{run.validation_scope === "fixture" ? "测试数据" : run.component?.judge_model ? `非官方 Judge · ${run.component.judge_model}` : run.scoring_basis === "post-close-official" ? "官方终态复评" : "官方 SDK"}</dd></div></dl>
     {run.protocol ? <section className="evaluation-consistency" aria-label="重复评测一致性">
       <h3>重复评测一致性</h3><p className="evaluation-caption">pass^k：同一任务 k 次均成功的估计值。</p>
       {stats.complete ? <dl>{evaluationConsistency(run).map(({ k, value }) => <div key={k}><dt>pass^{k}</dt><dd>{percent(value)}</dd></div>)}</dl> : <p className="evaluation-caption">尝试记录不完整，暂不计算。</p>}
     </section> : null}
     {run.official_metrics ? <section className="evaluation-scenes"><h3>场景评测</h3><p className="evaluation-caption">所选完整场景子集。TGC：任务目标完成率；SGC：场景内全部任务完成率。</p><div className="evaluation-table-wrap"><table><thead><tr><th>轮次</th><th>任务 / 场景</th><th>TGC</th><th>SGC</th></tr></thead><tbody>{run.official_metrics.map((m) => <tr key={m.trial}><td>{m.trial + 1}</td><td>{m.tasks} / {m.scenarios}</td><td>{percent(m.task_goal_completion)}</td><td>{percent(m.scenario_goal_completion)}</td></tr>)}</tbody></table></div></section> : null}
     <p className="evaluation-limits">{c.benchmark === "longmemeval" ? "LongMemEval-S 子集" : c.benchmark === "skillsbench" || c.benchmark === "mcp-universe" ? "任务子集" : "开发集子集"} · 模型快照未锁定 · 无配对模型对照 · 费用未记录</p>
+    {run.component ? <p className="evaluation-limits">{[
+      run.component.reference_memory ? "参考词法检索，不代表生产 Memory 服务" : null,
+      run.component.reference_skills ? "参考技能文件端口，不代表生产 Skill 服务" : null,
+      run.component.judge_scope === "custom-judge-not-official-comparable" ? "替代评分模型，不能与官方分数直接比较" : null,
+      run.component.development_exposed_tasks.length ? `${run.component.development_exposed_tasks.length} 个样本曾用于开发联调` : null,
+      c.benchmark === "mcp-universe" ? "仅本地 Blender 任务，不覆盖外部账号场景" : null,
+    ].filter(Boolean).join(" · ")}</p> : null}
     {run.scoring_basis === "post-close-official" ? <details className="evaluation-revision"><summary>评分修订 · {run.scoring_adjustments} 次判定更正</summary><p>最终成绩采用关闭环境后的官方复评。{run.scoring_adjustments} 次判定与运行中读数不同，原始判定及奖励保留在样本明细中。</p></details> : null}
     <details className="evaluation-samples"><summary>样本明细 <span>{run.attempts.length} 次尝试</span></summary>
       <div className="evaluation-table-wrap"><table><thead><tr><th>任务 / 轮次</th><th>结果</th><th>耗时</th><th>模型 / 工具调用</th><th>运行奖励 / 复评奖励</th></tr></thead><tbody>{run.attempts.map((a) => <tr key={`${a.task_id}-${a.trial}`}>
-        <th scope="row"><code>{a.task_id}</code><small>第 {a.trial + 1} 轮</small></th>
+        <th scope="row"><code>{a.task_id}</code><small>第 {a.trial + 1} 轮{run.component ? ` · 时限 ${run.component.task_timeouts[a.task_id]} s` : ""}</small></th>
         <td>{evaluationStatus(a.status, a.success)}{a.episode_success !== null && a.episode_success !== a.success ? <small>原始判定：{a.episode_success ? "成功" : "未成功"} → {a.success ? "成功" : "未通过"}</small> : null}</td>
         <td>{a.elapsed_seconds === null ? "—" : `${a.elapsed_seconds.toFixed(1)} s`}</td><td>{a.model_calls ?? "—"} / {a.tool_calls ?? "—"}</td><td>{a.official_reward ?? "—"} / {a.independent_reward ?? "—"}</td>
       </tr>)}</tbody></table></div>
     </details>
     <details className="evaluation-provenance"><summary>评测配置与版本</summary><dl className="evaluation-config">
       <dt>报告编号</dt><dd>{run.run_id}</dd><dt>评测协议</dt><dd>{run.protocol ?? "单次评测"}</dd>
-      <dt>数据集</dt><dd>{c.split}{c.domain ? ` / ${c.domain}` : ""}</dd><dt>样本范围</dt><dd>{run.protocol ? "保留样本" : "单次评测"}</dd>
+      <dt>数据集</dt><dd>{c.split}{c.domain ? ` / ${c.domain}` : ""}</dd><dt>样本范围</dt><dd>{run.component ? "固定开发子集" : run.protocol ? "保留样本" : "单次评测"}</dd>
       <dt>执行配置</dt><dd>{run.harness_profile}</dd><dt>执行器版本</dt><dd>{c.harness_revision}</dd>
       <dt>评分器版本</dt><dd>{run.verifier_revision ?? "未记录"}</dd><dt>基准版本</dt><dd>{run.upstream_revision ?? "未记录"}</dd>
       <dt>数据指纹</dt><dd>{c.dataset_revision}</dd><dt>数据校验</dt><dd>{run.attempts.length > 0 && run.attempts.every((a) => a.dataset_revision_verified) ? "已记录样本全部通过" : "存在未校验样本"}</dd>
@@ -77,6 +106,7 @@ export function EvaluationsView({ client }: { client: ClawClient }) {
     {report.data ? <>
       <div className="evaluation-toolbar"><label>基准 <select aria-label="基准" value={filter} onChange={(e) => setFilter(e.target.value)}><option value="all">全部</option>{[...new Set(runs.map((r) => r.config.benchmark))].map((b) => <option key={b} value={b}>{benchmarkName(b)}</option>)}</select></label><span>报告发布于 {new Date(report.data.exported_at).toLocaleString("zh-CN", { hour12: false })}</span></div>
       {runs.length === 0 ? <p role="status">暂无已发布的评测结果。</p> : null}
+      <ConditionComparison runs={primary.filter(matches)} />
       <div className="evaluation-grid">{primary.filter(matches).map((run) => <RunCard key={run.run_id} run={run} />)}</div>
       {history.some(matches) ? <details className="evaluation-history"><summary>历史运行 <span>{history.filter(matches).length} 份报告</span></summary><div className="evaluation-grid">{history.filter(matches).map((run) => <RunCard key={run.run_id} run={run} />)}</div></details> : null}
       {runs.length > 0 ? <p className="evaluation-footnote">各运行按独立配置统计；子集结果不用于完整基准排名。</p> : null}

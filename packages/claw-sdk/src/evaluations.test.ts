@@ -43,7 +43,7 @@ describe("evaluation artifacts", () => {
       if (kind === "foreign-task") run.attempts[0]!.task_id = "unexpected";
       if (kind === "invalid-number") run.attempts[0]!.elapsed_seconds = -1;
       if (kind === "inconsistent-success") run.attempts[0]!.official_reward = 0;
-      if (kind === "schema") value.schema_version = 3;
+      if (kind === "schema") value.schema_version = 4;
       await expect(getEvaluations(client(value))).rejects.toThrow("评测报告格式无效");
     },
   );
@@ -106,5 +106,22 @@ it("accepts v2 final goal judgments while preserving and explaining live diagnos
   expect(evaluationStats(parsed.runs[0]!)).toMatchObject({ success: 3, rate: 1 / 3 });
   expect(parsed.runs[0]!.attempts[8]).toMatchObject({ success: false, episode_success: true, official_reward: 1, independent_reward: 0 });
   run.scoring_adjustments = 0;
+  await expect(getEvaluations(client(value))).rejects.toThrow("格式无效");
+});
+
+
+it("preserves reference component limitations and rejects incomplete v3 batches", async () => {
+  const base = report().runs[0]!;
+  const run = { ...base, protocol: "auraclaw-components-v1", trials: 3, validation_scope: "reference-adapter",
+    config: { ...base.config, benchmark: "longmemeval", split: "s_cleaned", domain: null },
+    component: { condition: "retrieval-memory", judge_model: "qwen-test", judge_scope: "custom-judge-not-official-comparable",
+      reference_memory: true, reference_skills: false, development_exposed_tasks: [], task_timeouts: { "0": 600, "1": 600 } },
+    attempts: [0, 1].flatMap((task) => [0, 1, 2].map((trial) => ({ ...base.attempts[0]!, task_id: String(task), trial }))),
+  };
+  const value = { ...report(), schema_version: 3, runs: [run] };
+  const parsed = await getEvaluations(client(value));
+  expect(parsed.runs[0]!.component).toMatchObject({ reference_memory: true, judge_model: "qwen-test" });
+  await expect(getEvaluations(client({ ...value, schema_version: 2 }))).rejects.toThrow("格式无效");
+  run.attempts.pop();
   await expect(getEvaluations(client(value))).rejects.toThrow("格式无效");
 });

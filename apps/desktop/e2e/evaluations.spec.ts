@@ -141,3 +141,29 @@ for (const [benchmark, title, url, scope] of [
     await expect(page.getByText("测试数据 · 不计基准成绩", { exact: true })).toBeVisible();
   });
 }
+
+for (const width of [390, 1440]) {
+  test(`component conditions and limitations remain visible at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 });
+    await mockClaw(page);
+    const base = report().runs[0]!;
+    const runs = ["no-memory", "retrieval-memory", "full-history"].map((condition, i) => ({
+      ...base, run_id: `eval_${String(i + 3).repeat(32)}`, protocol: "auraclaw-components-v1", trials: 3,
+      validation_scope: "reference-adapter", config: { ...base.config, benchmark: "longmemeval", split: "s_cleaned" },
+      component: { condition, judge_model: "qwen-test", judge_scope: "custom-judge-not-official-comparable",
+        reference_memory: condition === "retrieval-memory", reference_skills: false, development_exposed_tasks: [],
+        task_timeouts: { "sample-0": 600, "sample-1": 600 } },
+      attempts: base.attempts.flatMap((a) => [0, 1, 2].map((trial) => ({ ...a, trial }))),
+    }));
+    await page.route("**/aurax/evaluations", (route) => route.fulfill({ json: { schema_version: 3, exported_at: "2026-10-23T08:00:00Z", runs } }));
+    await page.goto("/");
+    await page.getByRole("button", { name: "评测", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "LongMemEval · 检索记忆", exact: true })).toBeVisible();
+    await expect(page.getByRole("region", { name: "LongMemEval 条件对照", exact: true })).toBeVisible();
+    await expect(page.getByRole("cell", { name: "0.0 个百分点", exact: true })).toHaveCount(2);
+    await expect(page.getByText("参考词法检索，不代表生产 Memory 服务", { exact: false })).toBeVisible();
+    await expect(page.getByText("非官方 Judge · qwen-test", { exact: true })).toHaveCount(3);
+    await expect(page.getByText("替代评分模型，不能与官方分数直接比较", { exact: false })).toHaveCount(3);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  });
+}

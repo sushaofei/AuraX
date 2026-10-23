@@ -168,3 +168,12 @@ E3 AppWorld 的正式展示只采用 `two-post-close-official-graders` 的最终
 基准标题下的简介依据 [τ-bench 官方定义](https://github.com/sierra-research/tau-bench) 与
 [AppWorld 论文](https://arxiv.org/abs/2407.18901)，数据集、领域和样本范围放入配置详情。
 简介介绍基准评测目标，不扩大当前执行配置的覆盖声明。
+
+### Component report v3
+
+发布器支持 `auraclaw-components-v1`：三轮完整任务覆盖，按条件独立报告；LongMemEval
+必须声明替代 judge 和参考实现归属。SkillsBench 可按任务保留官方时限。
+只读取 `attempt_<n>.json` 的允许字段，不读取 trace、回答、worker 命令或模型错误详情。
+更新读者与静态资源后再原子替换报告；旧 τ-bench/AppWorld 报告继续保留，禁止用
+单题 canary 或部分完成的批次替代正式结果。条件对照只在模型、执行版本、预算、
+任务集合、重复次数及评分模型一致时显示；未记录费用不能按 token 数推算金额。

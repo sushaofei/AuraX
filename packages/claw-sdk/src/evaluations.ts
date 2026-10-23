@@ -8,10 +8,16 @@ export interface EvaluationAttempt {
 export interface OfficialEvaluationTrial {
   trial: number; tasks: number; scenarios: number; task_goal_completion: number; scenario_goal_completion: number;
 }
+export interface ComponentEvaluationProtocol {
+  condition: "no-memory" | "retrieval-memory" | "full-history" | "without-skill" | "with-skill" | "gateway-tools";
+  judge_model: string | null; judge_scope: "custom-judge-not-official-comparable" | "official-verifier";
+  reference_memory: boolean; reference_skills: boolean;
+  development_exposed_tasks: string[]; task_timeouts: Record<string, number>;
+}
 export interface EvaluationRun {
   scoring_basis: "episode" | "post-close-official"; scoring_adjustments: number; verifier_revision: string | null;
-  protocol: "e3-heldout-v1" | null; official_metrics: OfficialEvaluationTrial[] | null;
-  run_id: string; scope: "development"; validation_scope: "official-sdk-adapter" | "fixture";
+  protocol: "e3-heldout-v1" | "auraclaw-components-v1" | null; component: ComponentEvaluationProtocol | null; official_metrics: OfficialEvaluationTrial[] | null;
+  run_id: string; scope: "development"; validation_scope: "official-sdk-adapter" | "fixture" | "reference-adapter";
   model_snapshot_verified: false; total_cost: null;
   config: {
     benchmark: string; split: string; model: string; harness_revision: string; dataset_revision: string;
@@ -21,7 +27,7 @@ export interface EvaluationRun {
   };
   harness_profile: string; upstream_revision: string | null; task_ids: string[]; trials: number; attempts: EvaluationAttempt[];
 }
-export interface EvaluationReport { schema_version: 1 | 2; exported_at: string; runs: EvaluationRun[] }
+export interface EvaluationReport { schema_version: 1 | 2 | 3; exported_at: string; runs: EvaluationRun[] }
 const statuses = ["completed", "incomplete", "budget_exhausted", "infra_error", "runtime_error", "evaluation_error", "timeout"];
 function requireValue(value: boolean): asserts value {
   if (!value) throw new Error("评测报告格式无效，请联系管理员");
@@ -44,7 +50,7 @@ function boolean(value: unknown): boolean { requireValue(typeof value === "boole
 function revision(value: unknown): string { const result = text(value); requireValue(/^[a-f0-9]{40}$/.test(result)); return result; }
 function parseRun(value: unknown): EvaluationRun {
   const r = object(value), c = object(r.config);
-  requireValue(r.protocol === undefined || r.protocol === null || r.protocol === "e3-heldout-v1");
+  requireValue(r.protocol === undefined || r.protocol === null || r.protocol === "e3-heldout-v1" || r.protocol === "auraclaw-components-v1");
   const protocol = r.protocol ?? null;
   const scoring_basis = r.scoring_basis ?? "episode";
   requireValue(scoring_basis === "episode" || scoring_basis === "post-close-official");
@@ -62,7 +68,7 @@ function parseRun(value: unknown): EvaluationRun {
     });
   }
   requireValue(r.scope === "development" && r.model_snapshot_verified === false && r.total_cost === null);
-  requireValue(r.validation_scope === "official-sdk-adapter" || r.validation_scope === "fixture");
+  requireValue(r.validation_scope === "official-sdk-adapter" || r.validation_scope === "fixture" || r.validation_scope === "reference-adapter");
   requireValue(Array.isArray(r.task_ids) && r.task_ids.length > 0 && Array.isArray(r.attempts));
   const task_ids = r.task_ids.map(text), trials = number(r.trials, true);
   requireValue(new Set(task_ids).size === task_ids.length && trials > 0);
@@ -89,7 +95,24 @@ function parseRun(value: unknown): EvaluationRun {
     per_turn_output_tokens: number(c.per_turn_output_tokens, true), timeout_seconds: number(c.timeout_seconds),
     seed: number(c.seed, true), domain: nullableText(c.domain), user_model: nullableText(c.user_model), user_provider: nullableText(c.user_provider) };
   requireValue(/^sha256:[a-f0-9]{64}$/.test(config.dataset_revision) && config.max_actions > 0 && config.max_output_tokens > 0 && config.per_turn_output_tokens > 0 && config.timeout_seconds > 0);
-  if (protocol) requireValue(trials === 3 && config.split === "dev");
+  if (protocol === "e3-heldout-v1") requireValue(trials === 3 && config.split === "dev");
+  let component: ComponentEvaluationProtocol | null = null;
+  if (protocol === "auraclaw-components-v1") {
+    const m = object(r.component), condition = text(m.condition);
+    const allowed: Record<string, string[]> = { longmemeval: ["no-memory", "retrieval-memory", "full-history"], skillsbench: ["without-skill", "with-skill"], "mcp-universe": ["gateway-tools"] };
+    requireValue(allowed[config.benchmark]?.includes(condition) === true && trials === 3 && attempts.length === task_ids.length * trials);
+    requireValue(m.judge_scope === "custom-judge-not-official-comparable" || m.judge_scope === "official-verifier");
+    const judge_model = nullableText(m.judge_model), reference_memory = boolean(m.reference_memory), reference_skills = boolean(m.reference_skills);
+    requireValue(reference_memory === (condition === "retrieval-memory") && reference_skills === (condition === "with-skill"));
+    requireValue(Array.isArray(m.development_exposed_tasks));
+    const development_exposed_tasks = m.development_exposed_tasks.map(text);
+    requireValue(development_exposed_tasks.every((t) => task_ids.includes(t)));
+    const task_timeouts = Object.fromEntries(Object.entries(object(m.task_timeouts)).map(([k, v]) => [text(k), number(v)]));
+    requireValue(Object.keys(task_timeouts).length === task_ids.length && task_ids.every((t) => (task_timeouts[t] ?? 0) > 0));
+    if (config.benchmark === "longmemeval") requireValue(judge_model !== null && m.judge_scope === "custom-judge-not-official-comparable" && r.validation_scope === "reference-adapter");
+    else requireValue(judge_model === null && m.judge_scope === "official-verifier" && r.validation_scope === "official-sdk-adapter");
+    component = { condition: condition as ComponentEvaluationProtocol["condition"], judge_model, judge_scope: m.judge_scope, reference_memory, reference_skills, development_exposed_tasks, task_timeouts };
+  } else requireValue((r.component === undefined || r.component === null) && r.validation_scope !== "reference-adapter");
   if (official_metrics !== null) {
     requireValue(config.benchmark === "appworld" && official_metrics.length === trials && new Set(official_metrics.map((m) => m.trial)).size === trials);
     const families = new Set(task_ids.map((t) => t.slice(0, t.lastIndexOf("_"))));
@@ -109,14 +132,15 @@ function parseRun(value: unknown): EvaluationRun {
     requireValue(attempts.every((a) => a.success === (a.status === "completed" && a.independent_reward === 1)));
   } else requireValue(scoring_adjustments === 0);
   const run_id = text(r.run_id); requireValue(/^eval_[a-f0-9]{32}$/.test(run_id));
-  return { scoring_basis, scoring_adjustments, verifier_revision, protocol: protocol as EvaluationRun["protocol"], official_metrics, run_id, scope: r.scope, validation_scope: r.validation_scope, model_snapshot_verified: false, total_cost: null,
+  return { scoring_basis, scoring_adjustments, verifier_revision, component, protocol: protocol as EvaluationRun["protocol"], official_metrics, run_id, scope: r.scope, validation_scope: r.validation_scope, model_snapshot_verified: false, total_cost: null,
     config, harness_profile: text(r.harness_profile), upstream_revision: r.upstream_revision === null ? null : revision(r.upstream_revision), task_ids, trials, attempts };
 }
 export async function getEvaluations(client: ClawClient): Promise<EvaluationReport> {
   const { body } = await client.request<unknown>("GET", "/aurax/evaluations");
   const report = object(body);
-  requireValue((report.schema_version === 1 || report.schema_version === 2) && typeof report.exported_at === "string" && Number.isFinite(Date.parse(report.exported_at)) && Array.isArray(report.runs));
+  requireValue((report.schema_version === 1 || report.schema_version === 2 || report.schema_version === 3) && typeof report.exported_at === "string" && Number.isFinite(Date.parse(report.exported_at)) && Array.isArray(report.runs));
   const runs = report.runs.map(parseRun);
+  requireValue(report.schema_version === 3 || runs.every((r) => r.component === null));
   requireValue(new Set(runs.map((run) => run.run_id)).size === runs.length);
   return { schema_version: report.schema_version, exported_at: report.exported_at, runs };
 }

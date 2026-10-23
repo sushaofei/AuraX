@@ -87,15 +87,26 @@ class OfficialTrial(PublicModel):
     scenario_goal_completion: Annotated[float, Field(ge=0, le=1, allow_inf_nan=False)]
 
 
+class ComponentProtocol(PublicModel):
+    condition: Literal["no-memory", "retrieval-memory", "full-history", "without-skill", "with-skill", "gateway-tools"]
+    judge_model: Identifier | None = None
+    judge_scope: Literal["custom-judge-not-official-comparable", "official-verifier"]
+    reference_memory: bool = Field(strict=True)
+    reference_skills: bool = Field(strict=True)
+    development_exposed_tasks: list[Identifier] = Field(default_factory=list)
+    task_timeouts: dict[Identifier, Annotated[float, Field(gt=0, allow_inf_nan=False)]]
+
+
 class Run(PublicModel):
     run_id: Annotated[str, Field(pattern=r"^eval_[a-f0-9]{32}$")]
-    protocol: Literal["e3-heldout-v1"] | None = None
+    protocol: Literal["e3-heldout-v1", "auraclaw-components-v1"] | None = None
+    component: ComponentProtocol | None = None
     official_metrics: list[OfficialTrial] | None = None
     scoring_basis: Literal["episode", "post-close-official"] = "episode"
     scoring_adjustments: Count = 0
     verifier_revision: Revision | None = None
     scope: Literal["development"]
-    validation_scope: Literal["official-sdk-adapter", "fixture"]
+    validation_scope: Literal["official-sdk-adapter", "fixture", "reference-adapter"]
     model_snapshot_verified: Literal[False]
     config: Config
     harness_profile: Identifier
@@ -120,16 +131,35 @@ class Run(PublicModel):
             ):
                 raise ValueError("Unexpected or duplicate attempt")
             identities.add(key)
-        if self.protocol and (self.config.split != "dev" or self.trials != 3):
+        if self.protocol == "e3-heldout-v1" and (self.config.split != "dev" or self.trials != 3):
             raise ValueError("Invalid E3 protocol")
         if (
-            self.protocol
+            self.protocol == "e3-heldout-v1"
             and self.config.benchmark == "appworld"
             and self.scoring_basis != "post-close-official"
         ):
             raise ValueError(
                 "E3 AppWorld requires finalized post-close official scores"
             )
+        if self.protocol == "auraclaw-components-v1":
+            if self.component is None or self.trials != 3 or len(self.attempts) != len(self.task_ids) * 3:
+                raise ValueError("Component publication requires a complete controlled batch")
+            allowed = {"longmemeval": {"no-memory", "retrieval-memory", "full-history"},
+                       "skillsbench": {"without-skill", "with-skill"}, "mcp-universe": {"gateway-tools"}}
+            c = self.component
+            if c.condition not in allowed.get(self.config.benchmark, set()):
+                raise ValueError("Component condition does not match benchmark")
+            if set(c.task_timeouts) != set(self.task_ids) or not set(c.development_exposed_tasks) <= set(self.task_ids):
+                raise ValueError("Invalid component task coverage")
+            if self.config.benchmark == "longmemeval":
+                if c.judge_model is None or c.judge_scope != "custom-judge-not-official-comparable" or self.validation_scope != "reference-adapter":
+                    raise ValueError("LongMemEval requires explicit custom judge and reference scope")
+            elif c.judge_scope != "official-verifier" or c.judge_model is not None or self.validation_scope != "official-sdk-adapter":
+                raise ValueError("Official verifier provenance required")
+            if c.reference_memory != (c.condition == "retrieval-memory") or c.reference_skills != (c.condition == "with-skill"):
+                raise ValueError("Reference component attribution mismatch")
+        elif self.component is not None or self.validation_scope == "reference-adapter":
+            raise ValueError("Component metadata requires component protocol")
         if self.scoring_basis == "episode" and any(
             a.independent_reward is not None
             and a.official_reward is not None
@@ -213,12 +243,14 @@ class Run(PublicModel):
 
 
 class Report(PublicModel):
-    schema_version: Literal[1, 2]
+    schema_version: Literal[1, 2, 3]
     exported_at: datetime
     runs: list[Run] = Field(max_length=1000)
 
     @model_validator(mode="after")
     def unique_runs(self):
+        if self.schema_version < 3 and any(r.component is not None for r in self.runs):
+            raise ValueError("Component results require schema version 3")
         if len({r.run_id for r in self.runs}) != len(self.runs):
             raise ValueError("Duplicate runs")
         return self
@@ -234,6 +266,7 @@ def export_run(root: Path) -> Run:
             if k in manifest["config"]
         }
     )
+    component = ComponentProtocol.model_validate(manifest["component"]) if manifest.get("component") else None
     attempts, scopes, revisions, profiles = [], set(), set(), set()
     for path in sorted(root.iterdir()):
         if not re.fullmatch(r"attempt_\d+\.json", path.name):
@@ -246,7 +279,14 @@ def export_run(root: Path) -> Run:
                 if k in record["config"]
             }
         )
-        if record_config != config:
+        expected_config = config
+        if component is not None:
+            if record.get("run_scope") != "controlled-batch" or record.get("condition") != component.condition:
+                raise ValueError("Canary or mismatched condition cannot be published")
+            if record.get("judge") != component.judge_model:
+                raise ValueError("Judge model differs from declared protocol")
+            expected_config = config.model_copy(update={"timeout_seconds": component.task_timeouts[record["task_id"]]})
+        if record_config != expected_config:
             raise ValueError("Mixed configurations")
         if record.get("schema_version", 1) != 1:
             raise ValueError("Unsupported attempt schema")
@@ -321,6 +361,7 @@ def export_run(root: Path) -> Run:
         scoring_adjustments=scoring_adjustments,
         verifier_revision=verifier_revision,
         protocol=manifest.get("protocol"),
+        component=component,
         official_metrics=official,
         run_id=root.name,
         scope="development",
@@ -341,7 +382,7 @@ def main():
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     report = Report(
-        schema_version=2,
+        schema_version=3,
         exported_at=datetime.now(timezone.utc),
         runs=[export_run(root) for root in args.run],
     )

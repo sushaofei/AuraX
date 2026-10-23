@@ -257,3 +257,45 @@ def test_e3_appworld_live_diagnostics_are_never_published_as_final_results(tmp_p
     (root / "official-metrics.json").unlink()
     with pytest.raises(ValueError, match="finalized post-close"):
         export_run(root)
+
+
+def component_run(tmp_path):
+    root = raw_run(tmp_path)
+    manifest = json.loads((root / "manifest.json").read_text())
+    manifest["config"].update(benchmark="longmemeval", split="s_cleaned", domain=None)
+    manifest.update(protocol="auraclaw-components-v1", trials=3, component={
+        "condition": "retrieval-memory", "judge_model": "qwen-test",
+        "judge_scope": "custom-judge-not-official-comparable", "reference_memory": True,
+        "reference_skills": False, "development_exposed_tasks": [],
+        "task_timeouts": {"0": 600, "1": 600},
+    })
+    (root / "manifest.json").write_text(json.dumps(manifest))
+    template = json.loads((root / "attempt_000000.json").read_text())
+    for i in range(6):
+        record = {**template, "config": manifest["config"], "task_id": str(i % 2),
+                  "trial": i // 2, "validation_scope": "reference-adapter",
+                  "run_scope": "controlled-batch", "condition": "retrieval-memory", "judge": "qwen-test"}
+        (root / f"attempt_{i:06d}.json").write_text(json.dumps(record))
+    return root
+
+
+def test_component_reference_and_judge_limitations_are_preserved(tmp_path):
+    root = component_run(tmp_path)
+    run = export_run(root)
+    assert run.component.judge_scope == "custom-judge-not-official-comparable"
+    assert run.component.reference_memory is True
+    assert "NEVER-PUBLISH" not in run.model_dump_json()
+
+
+@pytest.mark.parametrize("problem", ["canary", "missing", "judge", "condition"])
+def test_component_publication_rejects_incomplete_or_mixed_scope(tmp_path, problem):
+    root = component_run(tmp_path)
+    path = root / "attempt_000000.json"
+    record = json.loads(path.read_text())
+    if problem == "missing":
+        path.unlink()
+    else:
+        record[{"canary": "run_scope", "judge": "judge", "condition": "condition"}[problem]] = "wrong"
+        path.write_text(json.dumps(record))
+    with pytest.raises(ValueError):
+        export_run(root)
