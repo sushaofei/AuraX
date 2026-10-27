@@ -139,6 +139,15 @@ export type McpServerConfigInput = {
   auth_strategy?: McpAuthStrategy;
   credential_ref?: string | null;
   allowed_cidrs?: string[];
+  tenant_id?: string | null;
+  allowed_resource_schemes?: string[];
+  allowed_prompt_prefixes?: string[];
+  trust_level?: "external_untrusted" | "tenant_verified" | "platform";
+  tool_admission_policy_version?: string | null;
+  /** Versioned backend policy objects are preserved when editing basic connection fields. */
+  tool_policy_overrides?: Record<string, Record<string, unknown>>;
+  metadata?: Record<string, unknown>;
+  oauth?: Record<string, unknown> | null;
 };
 
 export type McpServerConfigUpdate = Omit<McpServerConfigInput, "server_id">;
@@ -272,7 +281,11 @@ export function saveMcpServer(
     existing.server_id === serverId &&
     existing.desired_state !== "retired"
   ) {
-    const { server_id: _serverId, ...update } = buildMcpServerConfigPayload(config);
+    const sameEndpoint = existing.latest_config?.endpoint?.trim() === config.endpoint.trim();
+    const { server_id: _serverId, ...update } = buildMcpServerConfigPayload({
+      ...(sameEndpoint ? existing.latest_config : {}),
+      ...config,
+    });
     return updateMcpServer(client, serverId, update, existing.latest_revision);
   }
   return createMcpServer(client, config);

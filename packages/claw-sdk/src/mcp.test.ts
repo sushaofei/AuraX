@@ -236,6 +236,59 @@ describe("updateMcpServer", () => {
 });
 
 describe("saveMcpServer", () => {
+  it("preserves the registered private DNS scope and admission evidence on a basic edit", async () => {
+    let payload: Record<string, unknown> = {};
+    const client = new ClawClient({
+      baseUrl: "http://claw.example",
+      fetch: (async (_input, init) => {
+        payload = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        return jsonResponse({ server_id: "database", desired_state: "enabled", latest_revision: 3 });
+      }) as typeof fetch,
+    });
+    const policy = { "example.database.query": { permission: "read-only", content_digest: "fixed" } };
+    await saveMcpServer(client, {
+      server_id: "database", title: "Updated title", endpoint: "http://database:8020/mcp",
+      auth_strategy: "workload_trusted_context", credential_ref: "vault/database#workload",
+    }, {
+      server_id: "database", desired_state: "enabled", latest_revision: 2,
+      latest_config: {
+        endpoint: "http://database:8020/mcp", network_mode: "private",
+        allowed_cidrs: ["172.18.0.0/16"], trust_level: "platform",
+        tool_admission_policy_version: "reviewed-v1", tool_policy_overrides: policy,
+        metadata: { search_tags: ["database"] }, allowed_resource_schemes: ["example"],
+      },
+    });
+    expect(payload).toMatchObject({
+      title: "Updated title", network_mode: "private", allowed_cidrs: ["172.18.0.0/16"],
+      trust_level: "platform", tool_policy_overrides: policy,
+      tool_admission_policy_version: "reviewed-v1", metadata: { search_tags: ["database"] },
+      allowed_resource_schemes: ["example"],
+    });
+  });
+
+  it("does not copy old target trust or network policy to a changed endpoint", async () => {
+    let payload: Record<string, unknown> = {};
+    const client = new ClawClient({
+      baseUrl: "http://claw.example",
+      fetch: (async (_input, init) => {
+        payload = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        return jsonResponse({ server_id: "database", desired_state: "disabled", latest_revision: 3 });
+      }) as typeof fetch,
+    });
+    await saveMcpServer(client, {
+      server_id: "database", title: "Changed target", endpoint: "http://192.168.4.5/mcp",
+      auth_strategy: "workload_trusted_context", credential_ref: "vault/changed#workload",
+    }, {
+      server_id: "database", desired_state: "enabled", latest_revision: 2,
+      latest_config: { endpoint: "http://database:8020/mcp", network_mode: "private",
+        allowed_cidrs: ["172.18.0.0/16"], trust_level: "platform",
+        tool_policy_overrides: { query: { permission: "read-only" } } },
+    });
+    expect(payload.allowed_cidrs).toEqual(["192.168.4.5/32"]);
+    expect(payload).not.toHaveProperty("trust_level");
+    expect(payload).not.toHaveProperty("tool_policy_overrides");
+  });
+
   it("updates an existing server instead of posting again", async () => {
     let method: string | undefined;
     const client = new ClawClient({

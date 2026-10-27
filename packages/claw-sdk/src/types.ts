@@ -1,3 +1,5 @@
+import type { McpServerConfigInput } from "./mcp.js";
+
 export type ApprovalMode = "request_approval" | "auto_review" | "full_access";
 export type InteractionMode = "streaming" | "non_streaming";
 export type ApprovalState = {
@@ -187,14 +189,7 @@ export type McpServerRecord = {
   desired_state: string;
   latest_revision: number;
   active_revision?: number | null;
-  latest_config?: {
-    title?: string;
-    endpoint?: string;
-    protocol_revision?: string;
-    credential_ref?: string | null;
-    auth_strategy?: string;
-    network_mode?: string;
-  };
+  latest_config?: Partial<McpServerConfigInput>;
   runtime?: {
     observed_state?: string;
     last_test_at?: string | null;

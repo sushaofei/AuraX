@@ -5,7 +5,6 @@ import {
   type UseMutationResult,
 } from "@tanstack/react-query";
 import {
-  buildMcpServerConfigPayload,
   deleteMcpServer,
   inferMcpNetworkMode,
   listMcpCapabilities,
@@ -102,15 +101,9 @@ function buildMcpPayload(form: McpFormState, endpoint: string): McpServerConfigI
     endpoint,
     protocol_revision: form.protocol_revision,
   };
-  return buildMcpServerConfigPayload(
-    form.auth_strategy === "none"
-      ? { ...base, auth_strategy: "none" }
-      : {
-          ...base,
-          auth_strategy: "workload_trusted_context",
-          credential_ref: form.credential_ref.trim(),
-        },
-  );
+  return form.auth_strategy === "none"
+    ? { ...base, auth_strategy: "none", credential_ref: null, oauth: null }
+    : { ...base, auth_strategy: form.auth_strategy, credential_ref: form.credential_ref.trim() };
 }
 
 function serverSearchText(server: McpServerRecord): string {
@@ -152,7 +145,12 @@ export function McpView({ client }: { client: ClawClient }) {
       : undefined;
   const endpoint = form.endpoint.trim();
   const serverId = form.server_id.trim();
-  const networkMode = endpoint ? inferMcpNetworkMode(endpoint) : null;
+  const savedConfig = editingServer?.latest_config;
+  const networkMode = endpoint
+    ? savedConfig?.endpoint?.trim() === endpoint && savedConfig.network_mode
+      ? savedConfig.network_mode
+      : inferMcpNetworkMode(endpoint)
+    : null;
   const protocolHint =
     MCP_PROTOCOL_REVISION_OPTIONS.find((option) => option.value === form.protocol_revision)?.hint ?? "";
   const nonePublicConflict = form.auth_strategy === "none" && networkMode === "public";
