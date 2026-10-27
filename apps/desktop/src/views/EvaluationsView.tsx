@@ -106,8 +106,10 @@ export function EvaluationsView({ client }: { client: ClawClient }) {
     {report.data ? <>
       <div className="evaluation-toolbar"><label>基准 <select aria-label="基准" value={filter} onChange={(e) => setFilter(e.target.value)}><option value="all">全部</option>{[...new Set(runs.map((r) => r.config.benchmark))].map((b) => <option key={b} value={b}>{benchmarkName(b)}</option>)}</select></label><span>报告发布于 {new Date(report.data.exported_at).toLocaleString("zh-CN", { hour12: false })}</span></div>
       {runs.length === 0 ? <p role="status">暂无已发布的评测结果。</p> : null}
-      <ConditionComparison runs={primary.filter(matches)} />
-      <div className="evaluation-grid">{primary.filter(matches).map((run) => <RunCard key={run.run_id} run={run} />)}</div>
+      <div className="evaluation-grid">
+        <ConditionComparison runs={primary.filter(matches)} />
+        {primary.filter(matches).map((run) => <RunCard key={run.run_id} run={run} />)}
+      </div>
       {history.some(matches) ? <details className="evaluation-history"><summary>历史运行 <span>{history.filter(matches).length} 份报告</span></summary><div className="evaluation-grid">{history.filter(matches).map((run) => <RunCard key={run.run_id} run={run} />)}</div></details> : null}
       {runs.length > 0 ? <p className="evaluation-footnote">各运行按独立配置统计；子集结果不用于完整基准排名。</p> : null}
     </> : null}
