@@ -65,6 +65,7 @@ export function ChatView({
   const [streamNote, setStreamNote] = useState("");
   const [optimistic, setOptimistic] = useState<string[]>([]);
   const [streamingText, setStreamingText] = useState("");
+  const [streamingRunId, setStreamingRunId] = useState<string | null>(null);
   const [traceOpen, setTraceOpen] = useState(() => loadTraceOpen("chat"));
   const [traceCount, setTraceCount] = useState(0);
   const [traceWidth, setTraceWidth] = useState(loadTraceWidth);
@@ -136,6 +137,7 @@ export function ChatView({
   const clearStreaming = (targetSessionId: string | null = sessionId) => {
     deltaStateRef.current = createModelOutputDeltaState();
     setStreamingText("");
+    setStreamingRunId(null);
     if (targetSessionId) {
       clearStreamingBuffer(targetSessionId);
     }
@@ -172,6 +174,7 @@ export function ChatView({
       runId: cached.runId,
     };
     setStreamingText(cached.text);
+    setStreamingRunId(cached.runId ?? null);
   };
 
   useEffect(() => {
@@ -239,7 +242,7 @@ export function ChatView({
     void (async () => {
       try {
         for await (const event of followTaskStream(client, streamSessionId, streamOptions)) {
-          if (activeSessionRef.current !== streamSessionId) {
+          if (abort.signal.aborted || activeSessionRef.current !== streamSessionId) {
             break;
           }
           if (event.id) {
@@ -263,6 +266,7 @@ export function ChatView({
           if (runtime?.type === "model.output.delta") {
             deltaStateRef.current = mergeModelOutputDelta(deltaStateRef.current, runtime);
             setStreamingText(deltaStateRef.current.text);
+            setStreamingRunId(deltaStateRef.current.runId);
             persistStreaming(deltaStateRef.current, streamSessionId);
           }
           if (
@@ -369,7 +373,13 @@ export function ChatView({
   const waiting = task.data?.status === "waiting_for_human";
   const closed = task.data?.status === "closed";
   const missing = isNotFound(task.error);
-  const showStreaming = streamingText.length > 0;
+  // A restored SSE replay can arrive after the final transcript. Keep following
+  // the session for future runs, but never duplicate a confirmed assistant run.
+  const streamingConfirmed = messages.some((message) =>
+    message.role === "assistant" &&
+    (streamingRunId ? message.run_id === streamingRunId : streamIdle),
+  );
+  const showStreaming = streamingText.length > 0 && !streamingConfirmed;
   const traceVisible = Boolean(sessionId && !missing && traceOpen);
 
   useEffect(() => {
